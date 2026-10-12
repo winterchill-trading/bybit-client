@@ -130,8 +130,11 @@ val wallet_balance   : ?account_type:string -> Config.t -> Wallet_balance.t ...
 
 ```ocaml
 val Public_ws.connect : ?ping_interval -> ?initial_backoff -> ?max_backoff
-  -> ?on_reconnect:(unit -> unit) -> ?on_raw:(string -> unit) -> Config.t
+  -> ?on_reconnect:(unit -> unit) -> ?on_raw:(string -> unit)
+  -> ?on_frame:(string -> Ws_message.t Or_error.t -> unit)
+  -> ?time_source:Time_source.t -> Config.Read_only.t
   -> Public_ws.t Or_error.t Deferred.t
+val Public_ws.reconnects : t -> int
 val Public_ws.subscribe / unsubscribe / resubscribe : t -> Topic.t -> unit Deferred.t
 val Public_ws.messages : t -> Ws_message.t Pipe.Reader.t
 
@@ -145,6 +148,9 @@ val Private_ws.connect : ... -> ?subscribe:Topic.t list -> Config.t -> ...
   `{"op":"auth","args":[apiKey, expires, HMAC-SHA256(secret, "GET/realtime" ^ expires)]}`
   (`expires` 10 s ahead), waits for the auth ack, then replays the subscriptions. The
   public stream replays its subscriptions directly. `on_reconnect` runs afterwards.
+- `on_raw` sees each frame before decoding, `on_frame` sees it with its (single)
+  decoding; `time_source` (default the wall clock) drives the keepalive, the watchdog and
+  the backoff, so tests can step reconnects with a synthetic clock.
 - `subscribe` is idempotent. A topic subscribed while a connection is still
   authenticating is sent by the replay, so it goes out once.
 - `resubscribe` sends `unsubscribe` and `subscribe`, which makes the server send a new
@@ -168,9 +174,18 @@ send).
 ### `Live_feed`: normalized market data
 
 ```ocaml
-val Live_feed.create
+val Live_feed.connect
   :  ?on_raw:(stream:Market_data.Stream.t -> recv_ts:Time_ns.t -> string -> unit)
   -> ?l2_depth:int
+  -> ?time_source:Time_source.t
+  -> Config.Read_only.t -> symbols:string list -> streams:Market_data.Stream.t list
+  -> Live_feed.t Deferred.t
+val Live_feed.feed  : t -> Market_data.Feed.t
+val Live_feed.stats : t -> (Market_data.Stream.t * Stats.t) list
+  (* Stats.t = { frames; parse_errors; reconnects } per stream *)
+
+val Live_feed.create   (* connect with Config.read_only, then feed *)
+  :  ?on_raw:... -> ?l2_depth:int
   -> Config.t -> symbols:string list -> streams:Market_data.Stream.t list
   -> Market_data.Feed.t Deferred.t
 ```
@@ -186,8 +201,14 @@ stream, so a frame's stream is known before it is parsed:
 | `l2`      | `orderbook.<depth>.<symbol>` | snapshots and deltas as `L2_update.t` (depth 50), `ts`  |
 | `funding` | `tickers.<symbol>`           | `Funding.t` when rate, next time, mark or index change  |
 
-- `recv_ts` is taken when the frame arrives; `on_raw` gets that frame unparsed first (acks
-  and pongs included), which is what a `Frame_log` recorder stores.
+- `recv_ts` is taken from `time_source` (default the wall clock) when the frame arrives;
+  `on_raw` gets that frame unparsed first (acks and pongs included), which is what a
+  `Frame_log` recorder stores.
+- Each frame is decoded once (`Public_ws`'s `on_frame`) and then normalized. Decoding
+  twice, as before, cost 2861 minor words and 14.3 us per `orderbook.50` frame through a
+  loopback socket; once costs 1747 words and 8.5 us.
+- `stats` counts frames, parse errors (frames that do not decode or normalize; they are
+  logged and skipped) and reconnects, per stream.
 - Books go through `Local_book`; a sequence gap resubscribes the topic and the next
   snapshot resynchronises. Ticker deltas are merged into the last snapshot.
 - Reconnects (backoff, resubscription) come from `Public_ws`; Bybit answers each

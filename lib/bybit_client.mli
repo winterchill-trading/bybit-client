@@ -21,3 +21,6 @@ module Id_map = Id_map
 
 (** [Mm_core.Venue.S] adapter, so the market maker runs on Bybit. *)
 module Venue = Venue
+
+(** Normalized [Market_data.Feed] over the public stream. *)
+module Live_feed = Live_feed

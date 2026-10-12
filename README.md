@@ -354,6 +354,14 @@ secrets should never be committed or passed on the command line. The clock must 
 - `Live_feed.Normalizer` on sample frames from the docs: trades, `orderbook.50` snapshot,
   delta and gap (resubscribe), `orderbook.1` into BBO, ticker snapshot and deltas into
   funding, acks, unknown topics and junk;
+- recorded mainnet frames (`test/fixtures`, 20 s of BTCUSDT per stream, see its README):
+  every frame decodes, and the normalizer turns them into 487 trades, 579 BBOs, 1 L2
+  snapshot plus 849 deltas, and 42 funding records with no parse error or gap; minor
+  words per frame for decoding and normalizing are pinned;
+- `Live_feed` against a loopback websocket server: malformed frames counted as parse
+  errors and skipped, a reconnect stepped on a synthetic `Time_source` (no reconnect
+  before the backoff elapses, resubscription after it, `recv_ts` from the synthetic
+  clock, `reconnects = 1`), and an allocation bound for the single-decode live path;
 - an integration test that starts `Bybit_sim.Server` on a free port and exercises every
   `Rest` endpoint, both websocket streams (subscribe, resubscribe snapshot, both pong
   shapes, auth, private pushes), and the `Venue` adapter end to end: books, a post-only
@@ -363,6 +371,25 @@ secrets should never be committed or passed on the command line. The clock must 
 
 The simulator runs on the wall clock (the timestamp and auth checks compare against it),
 so the integration test leaves timestamps out of its output.
+
+## Benchmarks
+
+`bench/main.exe` runs core_bench over the recorded frames (run it from the repository
+root, or set `BYBIT_FIXTURES`): decode, normalize a decoded message, and both, per frame
+and stream. On an M-series Mac:
+
+| stream (bytes/frame) | decode            | normalize       | decode + normalize |
+| -------------------- | ----------------- | --------------- | ------------------ |
+| trades (452)         | 7.3 us, 818 words | 33 ns, 46 words | 5.3 us, 867 words  |
+| bbo (195)            | 2.6 us, 506 words | 158 ns, 122     | 2.7 us, 632 words  |
+| l2 (366)             | 5.8 us, 1112 w    | 646 ns, 492 w   | 6.5 us, 1608 words |
+| funding (236)        | 2.8 us, 502 words | 85 ns, 34 words | 2.9 us, 540 words  |
+
+```sh
+dune exec bench/main.exe -- -quota 1 -ascii
+```
+
+JSON decoding dominates; the normalizer itself is well under a microsecond per frame.
 
 ## UNVERIFIED
 

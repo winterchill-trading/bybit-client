@@ -2,13 +2,20 @@ open! Core
 
 type t = Ws_stream.t
 
-let connect ?ping_interval ?initial_backoff ?max_backoff ?on_reconnect (config : Config.t)
+let connect
+  ?ping_interval
+  ?initial_backoff
+  ?max_backoff
+  ?on_reconnect
+  ?on_raw
+  (config : Config.t)
   =
   Ws_stream.connect
     ?ping_interval
     ?initial_backoff
     ?max_backoff
     ?on_reconnect
+    ?on_raw
     ~log_name:"bybit-client public ws"
     config.ws_public_url
 ;;

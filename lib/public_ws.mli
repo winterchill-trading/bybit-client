@@ -6,7 +6,8 @@
     - On close the client reconnects with exponential backoff, resends every subscription
       (the server answers with fresh snapshots) and then calls [on_reconnect].
     - [messages] carries every decoded message, including acks and pongs; undecodable
-      frames are logged at debug level and dropped. Buffered without pushback. *)
+      frames are logged at debug level and dropped. Buffered without pushback.
+    - [on_raw] is called with every text frame exactly as received, before decoding. *)
 
 open! Core
 open Async
@@ -19,6 +20,7 @@ val connect
   -> ?initial_backoff:Time_ns.Span.t
   -> ?max_backoff:Time_ns.Span.t
   -> ?on_reconnect:(unit -> unit)
+  -> ?on_raw:(string -> unit)
   -> Config.t
   -> t Or_error.t Deferred.t
 

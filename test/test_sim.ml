@@ -22,19 +22,33 @@ let with_sim f =
 
 let ok_exn d = Deferred.map d ~f:Or_error.ok_exn
 
+(* Waiting with [values_available] rather than [read] leaves nothing behind on timeout: an
+   abandoned [read] would swallow the next value. *)
+let available r ~timeout =
+  match%map Clock_ns.with_timeout timeout (Pipe.values_available r) with
+  | `Result `Ok -> true
+  | `Result `Eof | `Timeout -> false
+;;
+
 (* The next element of [r], waiting at most 5s. *)
 let next r =
-  match%map Clock_ns.with_timeout (Time_ns.Span.of_int_sec 5) (Pipe.read r) with
-  | `Result (`Ok x) -> Some x
-  | `Result `Eof | `Timeout -> None
+  if%map available r ~timeout:(Time_ns.Span.of_int_sec 5)
+  then (
+    match Pipe.read_now r with
+    | `Ok x -> Some x
+    | `Eof | `Nothing_available -> None)
+  else None
 ;;
 
 (* Everything [r] delivers until it has been quiet for 300ms. *)
 let drain r =
   let rec loop acc =
-    match%bind Clock_ns.with_timeout (Time_ns.Span.of_int_ms 300) (Pipe.read r) with
-    | `Result (`Ok x) -> loop (x :: acc)
-    | `Result `Eof | `Timeout -> return (List.rev acc)
+    if%bind available r ~timeout:(Time_ns.Span.of_int_ms 300)
+    then (
+      match Pipe.read_now' r with
+      | `Ok q -> loop (acc @ Queue.to_list q)
+      | `Eof | `Nothing_available -> return acc)
+    else return acc
   in
   loop []
 ;;
@@ -344,5 +358,88 @@ let%expect_test "Venue against the simulator" =
     let%bind () = Venue.close venue in
     print_s [%sexp (Pipe.is_closed (Venue.fills venue) : bool)];
     [%expect {| true |}];
+    return ())
+;;
+
+let describe (message : Ws_message.t) =
+  match message with
+  | Subscribe_ack r ->
+    sprintf "subscribe ack success=%b" (Option.value r.success ~default:false)
+  | Auth_ack r -> sprintf "auth ack success=%b" (Option.value r.success ~default:false)
+  | Pong r -> sprintf "pong op=%s" r.op
+  | Orderbook o ->
+    sprintf
+      "orderbook %s %s bids=%d asks=%d"
+      (Update_type.to_wire o.type_)
+      (Symbol.to_string o.data.s)
+      (List.length o.data.b)
+      (List.length o.data.a)
+  | Order p -> sprintf "order x%d" (List.length p.data)
+  | Execution p -> sprintf "execution x%d" (List.length p.data)
+  | Position p -> sprintf "position x%d" (List.length p.data)
+  | Wallet p -> sprintf "wallet x%d" (List.length p.data)
+  | Op_response _ | Public_trade _ | Ticker _ | Unknown _ -> "other"
+;;
+
+let print_messages r =
+  let%map messages = drain r in
+  List.iter messages ~f:(fun m -> print_endline (describe m))
+;;
+
+let%expect_test "public and private streams" =
+  with_sim (fun config ->
+    let other = config "other" in
+    let%bind (_ : Order_ack.t) =
+      Rest.create_order
+        other
+        (Create_order.Params.limit
+           btc
+           ~side:Buy
+           ~qty:(Size.of_string "0.01")
+           ~price:(Price.of_string "99000"))
+      |> ok_exn
+    in
+    let%bind public = Public_ws.connect other |> ok_exn in
+    let topic : Topic.t = Orderbook { depth = 50; symbol = btc } in
+    let%bind () = Public_ws.subscribe public topic in
+    let%bind () = Public_ws.subscribe public topic in
+    let%bind () = print_messages (Public_ws.messages public) in
+    [%expect
+      {|
+      subscribe ack success=true
+      orderbook snapshot BTCUSDT bids=1 asks=0
+      |}];
+    (* What the venue does on a gap: a fresh snapshot. *)
+    let%bind () = Public_ws.resubscribe public topic in
+    let%bind () = print_messages (Public_ws.messages public) in
+    [%expect
+      {|
+      subscribe ack success=true
+      subscribe ack success=true
+      orderbook snapshot BTCUSDT bids=1 asks=0
+      |}];
+    let%bind () = Public_ws.send public (Ping { req_id = None }) in
+    let%bind () = print_messages (Public_ws.messages public) in
+    [%expect {| pong op=ping |}];
+    let%bind private_ = Private_ws.connect other |> ok_exn in
+    print_s [%sexp (Private_ws.subscriptions private_ : Topic.t list)];
+    [%expect {| ((Order ()) (Execution ()) (Position ()) Wallet) |}];
+    let%bind () = print_messages (Private_ws.messages private_) in
+    [%expect
+      {|
+      auth ack success=true
+      subscribe ack success=true
+      subscribe ack success=true
+      subscribe ack success=true
+      subscribe ack success=true
+      |}];
+    let%bind (_ : Order_ack.t list) = Rest.cancel_all other ~symbol:btc |> ok_exn in
+    let%bind () = print_messages (Private_ws.messages private_) in
+    [%expect {| order x1 |}];
+    let%bind () = Public_ws.close public in
+    let%bind () = Private_ws.close private_ in
+    let%bind missing_key = Private_ws.connect (Config.local ()) in
+    print_s [%sexp (missing_key : _ Or_error.t)];
+    [%expect {| (Error "Private_ws.connect: the config has no API key") |}];
     return ())
 ;;

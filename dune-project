@@ -28,6 +28,7 @@
   bybit-protocol
   exchange-core
   mm-core
+  market-data
   cryptokit
   ppx_jane
   ppx_yojson_conv

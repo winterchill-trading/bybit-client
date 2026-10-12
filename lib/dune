@@ -8,6 +8,7 @@
   bybit-protocol
   exchange-core
   mm-core
+  market-data
   yojson
   uri)
  (preprocess

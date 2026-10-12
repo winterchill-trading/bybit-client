@@ -16,6 +16,8 @@ jobs:
             default: https://github.com/ocaml/opam-repository.git
       - run: opam pin add fixed-decimal https://github.com/winterchill-trading/fixed-decimal.git --no-action --yes
       - run: opam pin add exchange-core https://github.com/winterchill-trading/exchange-core.git --no-action --yes
+      - run: opam pin add parquet https://github.com/winterchill-trading/parquet.git --no-action --yes
+      - run: opam pin add market-data https://github.com/winterchill-trading/market-data.git --no-action --yes
       - run: opam pin add order-book https://github.com/winterchill-trading/order-book.git --no-action --yes
       - run: opam pin add exchange-core-engine https://github.com/winterchill-trading/exchange-core.git --no-action --yes
       - run: opam pin add venue-net https://github.com/winterchill-trading/venue-net.git --no-action --yes

@@ -188,6 +188,12 @@ module Normalizer = struct
     let%bind.Or_error decoded = Ws_stream.decode frame in
     Or_error.try_with (fun () -> message t ~recv_ts decoded)
   ;;
+
+  let reset t =
+    Hashtbl.clear t.books;
+    Hashtbl.clear t.tickers;
+    Hashtbl.clear t.funding
+  ;;
 end
 
 module Stats = struct

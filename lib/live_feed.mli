@@ -91,4 +91,8 @@ module Normalizer : sig
 
   (** Decodes then {!message}. [Error] for a frame that is not a known message. *)
   val frame : t -> recv_ts:Time_ns.t -> string -> Output.t Or_error.t
+
+  (** Forgets books and tickers, as after a dropped connection: books wait for the next
+      snapshot, and the next ticker snapshot emits a funding record. *)
+  val reset : t -> unit
 end

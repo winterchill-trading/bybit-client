@@ -28,7 +28,33 @@ open! Core
 open Async
 open Bybit_protocol
 
+(** Counters of one stream's connection, since {!connect}. *)
+module Stats : sig
+  type t =
+    { frames : int (** text frames received, acks and pongs included *)
+    ; parse_errors : int (** frames that did not decode or normalize; skipped *)
+    ; reconnects : int (** successful reconnections of the stream's socket *)
+    }
+  [@@deriving sexp_of]
+end
+
+type t
+
 (** Raises if a first connection fails, or if [streams] contains [Private]. *)
+val connect
+  :  ?on_raw:(stream:Market_data.Stream.t -> recv_ts:Time_ns.t -> string -> unit)
+  -> ?l2_depth:int
+  -> Config.t
+  -> symbols:string list
+  -> streams:Market_data.Stream.t list
+  -> t Deferred.t
+
+val feed : t -> Market_data.Feed.t
+
+(** One entry per requested stream, in {!Market_data.Stream.compare} order. *)
+val stats : t -> (Market_data.Stream.t * Stats.t) list
+
+(** [connect] then [feed]. *)
 val create
   :  ?on_raw:(stream:Market_data.Stream.t -> recv_ts:Time_ns.t -> string -> unit)
   -> ?l2_depth:int

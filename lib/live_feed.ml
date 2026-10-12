@@ -190,7 +190,39 @@ module Normalizer = struct
   ;;
 end
 
-let create ?on_raw ?l2_depth config ~symbols ~streams =
+module Stats = struct
+  type t =
+    { frames : int
+    ; parse_errors : int
+    ; reconnects : int
+    }
+  [@@deriving sexp_of]
+end
+
+module Counters = struct
+  type t =
+    { mutable frames : int
+    ; mutable parse_errors : int
+    }
+end
+
+type t =
+  { feed : Md.Feed.t
+  ; streams : (Md.Stream.t * Counters.t * Public_ws.t) list
+  }
+
+let feed t = t.feed
+
+let stats t =
+  List.map t.streams ~f:(fun (stream, (counters : Counters.t), ws) ->
+    ( stream
+    , { Stats.frames = counters.frames
+      ; parse_errors = counters.parse_errors
+      ; reconnects = Public_ws.reconnects ws
+      } ))
+;;
+
+let connect ?on_raw ?l2_depth config ~symbols ~streams =
   let streams = List.dedup_and_sort streams ~compare:Md.Stream.compare in
   if List.mem streams Private ~equal:Md.Stream.equal
   then raise_s [%message "Live_feed.create: the private stream is not a market feed"];
@@ -208,11 +240,14 @@ let create ?on_raw ?l2_depth config ~symbols ~streams =
   let normalizer = Normalizer.create () in
   let connect stream =
     let ws = Set_once.create () in
+    let counters = { Counters.frames = 0; parse_errors = 0 } in
     let on_raw frame =
       let recv_ts = Time_ns.now () in
+      counters.frames <- counters.frames + 1;
       Option.iter on_raw ~f:(fun on_raw -> on_raw ~stream ~recv_ts frame);
       match Normalizer.frame normalizer ~recv_ts frame with
       | Error error ->
+        counters.parse_errors <- counters.parse_errors + 1;
         Log.Global.error_s
           [%message
             "bybit live feed: cannot parse frame"
@@ -238,10 +273,12 @@ let create ?on_raw ?l2_depth config ~symbols ~streams =
       Deferred.List.iter symbols ~how:`Sequential ~f:(fun symbol ->
         Public_ws.subscribe connection (topic ?l2_depth stream symbol))
     in
-    connection
+    stream, counters, connection
   in
   let opened = ref [] in
-  let close_all () = Deferred.List.iter !opened ~how:`Parallel ~f:Public_ws.close in
+  let close_all () =
+    Deferred.List.iter !opened ~how:`Parallel ~f:(fun (_, _, ws) -> Public_ws.close ws)
+  in
   let%bind () =
     match%bind
       Monitor.try_with (fun () ->
@@ -262,12 +299,19 @@ let create ?on_raw ?l2_depth config ~symbols ~streams =
       Pipe.close l2_w;
       Pipe.close funding_w)
   in
-  return
+  let feed : Md.Feed.t =
     (module struct
       let trades = trades_r
       let bbo = bbo_r
       let l2 = l2_r
       let funding = funding_r
       let close () = Lazy_deferred.force_exn closed
-    end : Md.Feed.S)
+    end)
+  in
+  return { feed; streams = List.rev !opened }
+;;
+
+let create ?on_raw ?l2_depth config ~symbols ~streams =
+  let%map t = connect ?on_raw ?l2_depth config ~symbols ~streams in
+  feed t
 ;;

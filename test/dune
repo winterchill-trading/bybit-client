@@ -1,0 +1,18 @@
+(library
+ (name bybit_client_test)
+ (inline_tests
+  (flags
+   (:standard -source-tree-root .)))
+ (libraries
+  core
+  async
+  bybit-client
+  bybit-protocol
+  bybit-sim
+  exchange-core
+  exchange-core-engine
+  mm-core
+  yojson
+  uri)
+ (preprocess
+  (pps ppx_jane)))

@@ -78,3 +78,42 @@ let%expect_test "per-stream normalizer counts" =
     (funding (frames 181) (events ((Funding 42))) (errors 0) (resubscribes 0))
     |}]
 ;;
+
+(* Minor-heap words allocated per frame: decoding the JSON into a [Ws_message.t], then
+   normalizing it (book and ticker state included). *)
+let%expect_test "allocation per frame" =
+  List.iter streams ~f:(fun stream ->
+    let frames = frames stream in
+    let n = List.length frames in
+    let words f =
+      let before = Gc.minor_words () in
+      let result = f () in
+      (Gc.minor_words () - before) / n, result
+    in
+    let decode_words, messages =
+      words (fun () ->
+        List.filter_map frames ~f:(fun frame ->
+          Public_ws.For_testing.decode frame |> Result.ok))
+    in
+    let normalizer = Live_feed.Normalizer.create () in
+    let normalize_words, () =
+      words (fun () ->
+        List.iter messages ~f:(fun message ->
+          ignore
+            (Live_feed.Normalizer.message normalizer ~recv_ts message
+             : Live_feed.Normalizer.Output.t)))
+    in
+    print_s
+      [%message
+        stream
+          ~bytes_per_frame:(List.sum (module Int) frames ~f:String.length / n : int)
+          (decode_words : int)
+          (normalize_words : int)]);
+  [%expect
+    {|
+    (trades (bytes_per_frame 452) (decode_words 817) (normalize_words 42))
+    (bbo (bytes_per_frame 195) (decode_words 505) (normalize_words 118))
+    (l2 (bytes_per_frame 366) (decode_words 1111) (normalize_words 489))
+    (funding (bytes_per_frame 236) (decode_words 502) (normalize_words 30))
+    |}]
+;;

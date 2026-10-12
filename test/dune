@@ -8,6 +8,7 @@
  (libraries
   core
   async
+  async_websocket
   bybit-client
   bybit-protocol
   bybit-sim

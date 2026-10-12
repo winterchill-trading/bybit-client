@@ -37,6 +37,10 @@ val resubscribe : t -> Topic.t -> unit Deferred.t
 val subscriptions : t -> Topic.t list
 val send : t -> Ws_request.t -> unit Deferred.t
 val is_connected : t -> bool
+
+(** Successful reconnections so far; the first connection does not count. *)
+val reconnects : t -> int
+
 val close : t -> unit Deferred.t
 
 module For_testing : sig

@@ -27,6 +27,7 @@ let resubscribe = Ws_stream.resubscribe
 let subscriptions = Ws_stream.subscriptions
 let send = Ws_stream.send
 let is_connected = Ws_stream.is_connected
+let reconnects = Ws_stream.reconnects
 let close = Ws_stream.close
 
 module For_testing = struct

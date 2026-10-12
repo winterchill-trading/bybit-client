@@ -56,6 +56,16 @@ let%expect_test "a reconnect on the synthetic clock reports one Resync gap" =
       | Some at -> Time_ns.Span.(Time_ns.diff at (Time_source.now clock) < of_int_sec 1)
       | None -> false)
   in
+  (* The first reconnect waits 500 ms with 20% jitter. *)
+  (match Time_source.next_alarm_fires_at clock with
+   | Some at ->
+     let backoff = Time_ns.diff at (Time_source.now clock) in
+     print_s
+       [%message
+         ""
+           ~backoff_between_400_and_600_ms:
+             (Time_ns.Span.(backoff >= of_int_ms 400 && backoff <= of_int_ms 600) : bool)]
+   | None -> print_endline "no backoff");
   let%bind () = Time_source.advance_by_alarms_by clock (Time_ns.Span.of_int_sec 1) in
   let%bind (_ : bool) = Loopback.wait_until (fun () -> subscribes () = 2) in
   Loopback.push server (book ~type_:"snapshot" ~u:7 {|["16494.00","2"]|});
@@ -66,6 +76,7 @@ let%expect_test "a reconnect on the synthetic clock reports one Resync gap" =
   [%expect
     {|
     ("before the drop" (gaps 0))
+    (backoff_between_400_and_600_ms true)
     (gap (recv_ts 1000000000) (venue Bybit) (instrument ()) (stream (L2))
      (reason Resync))
     |}];

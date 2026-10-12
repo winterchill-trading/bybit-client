@@ -16,7 +16,7 @@ Bybit API (mainnet and testnet). It is the Bybit counterpart of
 
 ```sh
 opam switch create 5.2.0+ox --repos ox=git+https://github.com/oxcaml/opam-repository.git,default
-for p in fixed-decimal exchange-core order-book; do
+for p in fixed-decimal exchange-core parquet market-data order-book; do
   opam pin add -n -y $p https://github.com/winterchill-trading/$p.git
 done
 opam pin add -n -y exchange-core-engine https://github.com/winterchill-trading/exchange-core.git
@@ -70,7 +70,20 @@ val create  : ?ws_public_url:Uri.t -> ?ws_private_url:Uri.t -> ?api_key:string
 val local   : ?port:int -> ?api_key:string -> ?api_secret:string -> unit -> t  (* http://localhost:3400 *)
 val mainnet : ?api_key:string -> ?api_secret:string -> unit -> t   (* api.bybit.com, stream.bybit.com *)
 val testnet : ?api_key:string -> ?api_secret:string -> unit -> t   (* api-testnet / stream-testnet *)
+
+module Read_only : sig
+  type t                                  (* base_url and ws_public_url, nothing else *)
+  val create : ?ws_public_url:Uri.t -> base_url:Uri.t -> unit -> t
+  val local : ?port:int -> unit -> t
+  val mainnet : unit -> t
+  val testnet : unit -> t
+end
+val read_only : t -> Read_only.t          (* drops key, secret and the private stream *)
 ```
+
+`Read_only.t` has no credential field, so code holding one cannot sign a request or
+authenticate a stream: `Public_ws.connect` and `Live_feed.connect` take a `Read_only.t`;
+`Private_ws`, the trading `Rest` calls and `Venue` take the full `t`.
 
 `create` derives the websocket URLs from `base_url` (`ws`/`wss`, paths
 `/v5/public/linear` and `/v5/private`). `recv_window` defaults to 5000 ms. The secret is

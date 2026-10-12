@@ -96,3 +96,39 @@ let%expect_test "reconnect on a synthetic clock: resubscribes, counts, stamps re
     |}];
   return ()
 ;;
+
+(* The live path decodes each frame once: the allocation per frame stays well below two
+   decodes (1111 words for an l2 frame, see test_fixtures.ml) plus the normalizer.
+   Measured on the l2 fixture through the loopback socket: 2861 words per frame with the
+   double parse, 1747 after. *)
+let%expect_test "live path allocation per l2 frame" =
+  Log.Global.set_output [];
+  let%bind server = Loopback.start () in
+  let%bind live =
+    Live_feed.connect (Loopback.config server) ~symbols:[ "BTCUSDT" ] ~streams:[ L2 ]
+  in
+  let (module Feed) = Live_feed.feed live in
+  let%bind (_ : bool) =
+    Loopback.wait_until (fun () -> not (List.is_empty (Loopback.received server)))
+  in
+  let frames = In_channel.read_lines "fixtures/l2.jsonl" in
+  let n = List.length frames in
+  let before = Gc.minor_words () in
+  List.iter frames ~f:(Loopback.push server);
+  let%bind (_ : bool) =
+    Loopback.wait_until ~timeout:(Time_ns.Span.of_int_sec 30) (fun () ->
+      match Live_feed.stats live with
+      | [ (_, stats) ] -> stats.frames >= n
+      | _ -> false)
+  in
+  let words_per_frame = (Gc.minor_words () - before) / n in
+  print_s
+    [%message
+      ""
+        ~events:(Pipe.length Feed.l2 : int)
+        ~below_2000_words_per_frame:(words_per_frame < 2000 : bool)];
+  let%bind () = Feed.close () in
+  let%bind () = Loopback.close server in
+  [%expect {| ((events 850) (below_2000_words_per_frame true)) |}];
+  return ()
+;;

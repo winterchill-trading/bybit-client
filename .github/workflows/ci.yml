@@ -23,3 +23,5 @@ jobs:
             bybit-sim https://github.com/winterchill-trading/bybit-sim.git
       - run: opam exec -- dune build
       - run: opam exec -- dune test
+  obj-magic:
+    uses: winterchill-trading/infra/.github/workflows/obj-magic.yml@main

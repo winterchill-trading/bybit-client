@@ -157,7 +157,8 @@ let%expect_test "tickers become funding when it changes" =
          "symbol":"BTCUSDT","markPrice":"66670.00","fundingRate":"-0.0049"},
          "cs":9532239431,"ts":1760325052830}|}
     ];
-  [%expect {|
+  [%expect
+    {|
     ((events
       ((Funding
         ((instrument ((venue Bybit) (symbol BTCUSDT)))

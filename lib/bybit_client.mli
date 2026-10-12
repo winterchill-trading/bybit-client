@@ -18,3 +18,6 @@ module Private_ws = Private_ws
 
 (** Bybit string order and execution ids to [exchange-core] integer ids. *)
 module Id_map = Id_map
+
+(** [Mm_core.Venue.S] adapter, so the market maker runs on Bybit. *)
+module Venue = Venue

@@ -12,6 +12,7 @@
   exchange-core
   exchange-core-engine
   mm-core
+  market-data
   yojson
   uri)
  (preprocess

@@ -1,0 +1,13 @@
+(executable
+ (name bybit_cli)
+ (public_name bybit-cli)
+ (package bybit-client)
+ (libraries
+  core
+  async
+  core_unix.command_unix
+  bybit-client
+  bybit-protocol
+  uri)
+ (preprocess
+  (pps ppx_jane)))

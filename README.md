@@ -220,6 +220,21 @@ stream, so a frame's stream is known before it is parsed:
 - Undecodable frames are logged, never fatal. `close` closes the sockets and all pipes.
 - `Live_feed.Normalizer` is the pure frame-to-event part, used by the tests.
 
+### `Raw_normalizer`: rebuilding `norm/` from raw files
+
+`Raw_normalizer` is `Live_feed.Normalizer` as a `Market_data.Normalizer.S`, so
+market-recorder raw minute files of Bybit can be turned back into event logs:
+
+```ocaml
+Market_data.Rebuild_norm.command [ (module Bybit_client.Raw_normalizer) ]
+```
+
+Books are kept per topic, so any `orderbook.<depth>` recording works. A disconnect line
+calls `Live_feed.Normalizer.reset`, which drops books and tickers as a reconnect does:
+deltas are skipped until the next snapshot, and the next ticker snapshot emits a funding
+record. Gap resubscriptions cannot be sent while rebuilding; the book waits for the
+snapshot the live feed asked for, which is in the recording.
+
 ### `Id_map`
 
 Bybit's `orderId` and `execId` are strings: decimal numbers on some products and in the
@@ -295,9 +310,12 @@ BYBIT_API_KEY=mm bybit-cli watch -private            # order, execution, positio
 bybit-cli watch -orderbook BTCUSDT -base-url http://localhost:3471 -debug
 bybit-cli feed -symbol BTCUSDT -streams trades,bbo     # Market_data.Event.t sexps
 bybit-cli feed -symbol BTCUSDT,ETHUSDT -streams l2,funding -depth 200 -mainnet
+bybit-cli rebuild-norm -data-dir DIR -out NEW_DIR -date YYYY-MM-DD
 ```
 
-`feed` takes `-count N` to stop after N events.
+`feed` takes `-count N` to stop after N events. `rebuild-norm` reads a day of recorder
+raw files (`<data-dir>/raw/bybit/...`) and writes `<out>/bybit/<symbol>/norm/<stream>/`
+event logs; `out` must be new or empty.
 
 ## Running against the simulator
 
@@ -362,6 +380,10 @@ secrets should never be committed or passed on the command line. The clock must 
   every frame decodes, and the normalizer turns them into 487 trades, 579 BBOs, 1 L2
   snapshot plus 849 deltas, and 42 funding records with no parse error or gap; minor
   words per frame for decoding and normalizing are pinned;
+- the same fixtures through `Raw_normalizer` (same counts; after a `disconnect` deltas
+  are dropped until a snapshot), and `Market_data.Rebuild_norm` over raw minute files
+  written from them with a disconnect in the L2 series: 1837 frames, 1507 events, four
+  clean event logs;
 - `Live_feed` against a loopback websocket server: malformed frames counted as parse
   errors and skipped, a reconnect stepped on a synthetic `Time_source` (no reconnect
   before the backoff elapses, resubscription after it, `recv_ts` from the synthetic

@@ -1,0 +1,14 @@
+(library
+ (name bybit_client)
+ (public_name bybit-client)
+ (libraries
+  core
+  async
+  venue-net
+  bybit-protocol
+  exchange-core
+  mm-core
+  yojson
+  uri)
+ (preprocess
+  (pps ppx_jane)))

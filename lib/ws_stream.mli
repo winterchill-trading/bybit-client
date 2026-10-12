@@ -24,6 +24,8 @@ val connect
   -> t Or_error.t Deferred.t
 
 val messages : t -> Ws_message.t Pipe.Reader.t
+(** Records the topic and sends it if the current connection is ready (authenticated
+    and replayed); otherwise the replay on (re)connection sends it. Idempotent. *)
 val subscribe : t -> Topic.t -> unit Deferred.t
 val unsubscribe : t -> Topic.t -> unit Deferred.t
 

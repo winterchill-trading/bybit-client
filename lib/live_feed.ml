@@ -222,7 +222,14 @@ let stats t =
       } ))
 ;;
 
-let connect ?on_raw ?l2_depth config ~symbols ~streams =
+let connect
+  ?on_raw
+  ?l2_depth
+  ?(time_source = Time_source.wall_clock ())
+  config
+  ~symbols
+  ~streams
+  =
   let streams = List.dedup_and_sort streams ~compare:Md.Stream.compare in
   if List.mem streams Private ~equal:Md.Stream.equal
   then raise_s [%message "Live_feed.create: the private stream is not a market feed"];
@@ -242,7 +249,7 @@ let connect ?on_raw ?l2_depth config ~symbols ~streams =
     let ws = Set_once.create () in
     let counters = { Counters.frames = 0; parse_errors = 0 } in
     let on_raw frame =
-      let recv_ts = Time_ns.now () in
+      let recv_ts = Time_source.now time_source in
       counters.frames <- counters.frames + 1;
       Option.iter on_raw ~f:(fun on_raw -> on_raw ~stream ~recv_ts frame);
       match Normalizer.frame normalizer ~recv_ts frame with
@@ -264,7 +271,7 @@ let connect ?on_raw ?l2_depth config ~symbols ~streams =
       Log.Global.info "bybit live feed: %s reconnected" (Md.Stream.to_string stream)
     in
     let%bind connection =
-      Public_ws.connect ~on_reconnect ~on_raw config >>| Or_error.ok_exn
+      Public_ws.connect ~on_reconnect ~on_raw ~time_source config >>| Or_error.ok_exn
     in
     Set_once.set_exn ws connection;
     (* Frames are handled in [on_raw]; nobody reads the decoded copies. *)

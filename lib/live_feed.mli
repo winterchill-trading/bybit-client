@@ -40,10 +40,14 @@ end
 
 type t
 
-(** Raises if a first connection fails, or if [streams] contains [Private]. *)
+(** Raises if a first connection fails, or if [streams] contains [Private].
+
+    [time_source] (default the wall clock) stamps [recv_ts] and drives the sockets'
+    keepalive, watchdog and reconnect backoff. *)
 val connect
   :  ?on_raw:(stream:Market_data.Stream.t -> recv_ts:Time_ns.t -> string -> unit)
   -> ?l2_depth:int
+  -> ?time_source:Time_source.t
   -> Config.t
   -> symbols:string list
   -> streams:Market_data.Stream.t list

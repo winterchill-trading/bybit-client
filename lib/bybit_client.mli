@@ -9,3 +9,6 @@ module Rest = Rest
 
 (** Public websocket stream with ping, reconnect and resubscription. *)
 module Public_ws = Public_ws
+
+(** Orderbook snapshot and delta merging with update id checks. *)
+module Local_book = Local_book

@@ -75,7 +75,8 @@ let%expect_test "orderbook.50: snapshot, delta, gap" =
          "data":{"s":"BTCUSDT","b":[],"a":[["16613.00","1"]],"u":18521292,"seq":7961638728},
          "cts":1672304485008}|}
     ];
-  [%expect {|
+  [%expect
+    {|
     no events
     ((events
       ((L2
@@ -114,7 +115,8 @@ let%expect_test "orderbook.1 becomes bbo" =
          "data":{"s":"ETHUSDT","b":[],"a":[["1200.20","1"]],"u":903,"seq":53},
          "cts":1672304485176}|}
     ];
-  [%expect {|
+  [%expect
+    {|
     ((events
       ((Bbo
         ((instrument ((venue Bybit) (symbol ETHUSDT)))
@@ -130,5 +132,64 @@ let%expect_test "orderbook.1 becomes bbo" =
          (bid_size 0.5) (ask_price 1200.2) (ask_size 1)))))
      (resubscribe ()))
     no events
+    |}]
+;;
+
+let%expect_test "tickers become funding when it changes" =
+  feed
+    (normalizer ())
+    [ {|{"topic":"tickers.BTCUSDT","type":"snapshot","data":{
+         "symbol":"BTCUSDT","tickDirection":"MinusTick","price24hPcnt":"-0.158315",
+         "lastPrice":"66666.60","prevPrice24h":"79206.20","highPrice24h":"79266.30",
+         "lowPrice24h":"65076.90","prevPrice1h":"66666.60","markPrice":"66666.60",
+         "indexPrice":"115418.19","openInterest":"492373.72",
+         "openInterestValue":"32824881841.75","turnover24h":"4936790807.6521",
+         "volume24h":"73191.3870","fundingIntervalHour":"8","fundingCap":"0.005",
+         "nextFundingTime":"1760342400000","fundingRate":"-0.005","bid1Price":"66666.60",
+         "bid1Size":"23789.165","ask1Price":"66666.70","ask1Size":"23775.469",
+         "preOpenPrice":"","preQty":"","curPreListingPhase":""},
+         "cs":9532239429,"ts":1760325052630}|}
+    ; (* only the book moved *)
+      {|{"topic":"tickers.BTCUSDT","type":"delta","data":{
+         "symbol":"BTCUSDT","bid1Price":"66666.50","bid1Size":"1.5"},
+         "cs":9532239430,"ts":1760325052730}|}
+    ; {|{"topic":"tickers.BTCUSDT","type":"delta","data":{
+         "symbol":"BTCUSDT","markPrice":"66670.00","fundingRate":"-0.0049"},
+         "cs":9532239431,"ts":1760325052830}|}
+    ];
+  [%expect {|
+    ((events
+      ((Funding
+        ((instrument ((venue Bybit) (symbol BTCUSDT)))
+         (exch_ts "2025-10-13 03:10:52.630000000Z")
+         (recv_ts "2026-10-12 12:00:00.000000000Z") (rate -0.005)
+         (next_funding_time "2025-10-13 08:00:00.000000000Z")
+         (mark_price 66666.6) (index_price 115418.19)))))
+     (resubscribe ()))
+    no events
+    ((events
+      ((Funding
+        ((instrument ((venue Bybit) (symbol BTCUSDT)))
+         (exch_ts "2025-10-13 03:10:52.830000000Z")
+         (recv_ts "2026-10-12 12:00:00.000000000Z") (rate -0.0049)
+         (next_funding_time "2025-10-13 08:00:00.000000000Z") (mark_price 66670)
+         (index_price 115418.19)))))
+     (resubscribe ()))
+    |}]
+;;
+
+let%expect_test "acks, pongs and junk" =
+  feed
+    (normalizer ())
+    [ {|{"success":true,"ret_msg":"","conn_id":"c1","req_id":"","op":"subscribe"}|}
+    ; {|{"success":true,"ret_msg":"pong","conn_id":"c1","req_id":"","op":"ping"}|}
+    ; {|{"topic":"kline.1.BTCUSDT","type":"snapshot","ts":1,"data":[]}|}
+    ; {|not json|}
+    ];
+  [%expect {|
+    no events
+    no events
+    no events
+    parse error
     |}]
 ;;

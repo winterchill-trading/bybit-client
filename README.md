@@ -151,6 +151,36 @@ or `Gap { expected; received }`, after which the book is dropped until a new sna
 `to_l2 ?depth` gives an `Exchange_core.L2.t` (order counts `n = 0`, which Bybit does not
 send).
 
+### `Live_feed`: normalized market data
+
+```ocaml
+val Live_feed.create
+  :  ?on_raw:(stream:Market_data.Stream.t -> recv_ts:Time_ns.t -> string -> unit)
+  -> ?l2_depth:int
+  -> Config.t -> symbols:string list -> streams:Market_data.Stream.t list
+  -> Market_data.Feed.t Deferred.t
+```
+
+A [market-data](https://github.com/winterchill-trading/market-data) `Feed.t` over the
+public stream, read-only, no credentials. One `Public_ws` connection per requested
+stream, so a frame's stream is known before it is parsed:
+
+| stream    | topic                        | record                                                  |
+|-----------|------------------------------|---------------------------------------------------------|
+| `trades`  | `publicTrade.<symbol>`       | one `Trade.t` per print, `exch_ts` = `T`                |
+| `bbo`     | `orderbook.1.<symbol>`       | `Bbo.t` after each applied push with both sides, `ts`   |
+| `l2`      | `orderbook.<depth>.<symbol>` | snapshots and deltas as `L2_update.t` (depth 50), `ts`  |
+| `funding` | `tickers.<symbol>`           | `Funding.t` when rate, next time, mark or index change  |
+
+- `recv_ts` is taken when the frame arrives; `on_raw` gets that frame unparsed first (acks
+  and pongs included), which is what a `Frame_log` recorder stores.
+- Books go through `Local_book`; a sequence gap resubscribes the topic and the next
+  snapshot resynchronises. Ticker deltas are merged into the last snapshot.
+- Reconnects (backoff, resubscription) come from `Public_ws`; Bybit answers each
+  subscription with a fresh snapshot, so `l2` emits a `Snapshot` after a reconnect.
+- Undecodable frames are logged, never fatal. `close` closes the sockets and all pipes.
+- `Live_feed.Normalizer` is the pure frame-to-event part, used by the tests.
+
 ### `Id_map`
 
 Bybit's `orderId` and `execId` are strings: decimal numbers on some products and in the
@@ -224,14 +254,37 @@ bybit-cli tickers BTCUSDT -testnet
 bybit-cli watch -orderbook BTCUSDT -trades BTCUSDT -tickers BTCUSDT
 BYBIT_API_KEY=mm bybit-cli watch -private            # order, execution, position, wallet
 bybit-cli watch -orderbook BTCUSDT -base-url http://localhost:3471 -debug
+bybit-cli feed -symbol BTCUSDT -streams trades,bbo     # Market_data.Event.t sexps
+bybit-cli feed -symbol BTCUSDT,ETHUSDT -streams l2,funding -depth 200 -mainnet
 ```
+
+`feed` takes `-count N` to stop after N events.
 
 ## Running against the simulator
 
 ```sh
 dune exec bybit-sim -- -port 3400 &          # from the bybit-sim checkout
 BYBIT_API_KEY=mm bybit-cli watch -private -orderbook BTCUSDT
+bybit-cli feed -symbol BTCUSDT -streams trades,bbo -count 8
 ```
+
+The last command, verified against the simulator, prints normalized events such as
+
+```
+(Bbo
+ ((instrument ((venue Bybit) (symbol BTCUSDT)))
+  (exch_ts (2026-10-12 12:19:55.402000000+01:00))
+  (recv_ts (2026-10-12 12:19:55.402669000+01:00)) (bid_price 100077.8)
+  (bid_size 0.456) (ask_price 100088.4) (ask_size 0.279)))
+(Trade
+ ((instrument ((venue Bybit) (symbol BTCUSDT)))
+  (exch_ts (2026-10-12 12:19:55.664000000+01:00))
+  (recv_ts (2026-10-12 12:19:55.665206000+01:00)) (price 100066.9)
+  (size 0.539) (side Sell) (trade_id 83)))
+```
+
+Restarting the simulator under a running `feed -streams l2` shows the reconnect: the
+client retries with backoff, resubscribes and prints a new `Snapshot`.
 
 The simulator takes the account from `X-BAPI-API-KEY` (any key works and is credited
 1,000,000 USDT on first use), checks `X-BAPI-TIMESTAMP` against `X-BAPI-RECV-WINDOW`,
@@ -263,6 +316,9 @@ secrets should never be committed or passed on the command line. The clock must 
   without a secret), envelope and `retCode` decoding, `Local_book` sequencing (stale
   deltas, a gap, resync on snapshot, `u = 1` restart), `Id_map`, and every `Venue`
   conversion (orders, updates, fills, order requests, reject reasons, account);
+- `Live_feed.Normalizer` on sample frames from the docs: trades, `orderbook.50` snapshot,
+  delta and gap (resubscribe), `orderbook.1` into BBO, ticker snapshot and deltas into
+  funding, acks, unknown topics and junk;
 - an integration test that starts `Bybit_sim.Server` on a free port and exercises every
   `Rest` endpoint, both websocket streams (subscribe, resubscribe snapshot, both pong
   shapes, auth, private pushes), and the `Venue` adapter end to end: books, a post-only

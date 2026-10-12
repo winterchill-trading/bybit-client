@@ -58,6 +58,7 @@ let connect
   ?(max_backoff = Time_ns.Span.of_int_sec 30)
   ?(on_reconnect = fun () -> ())
   ?(on_raw = fun (_ : string) -> ())
+  ?(on_frame = fun (_ : string) (_ : Ws_message.t Or_error.t) -> ())
   ?authenticate
   ?(auth_timeout = Time_ns.Span.of_int_sec 10)
   ?(time_source = Time_source.wall_clock ())
@@ -70,7 +71,9 @@ let connect
   let out_r, out_w = Pipe.create () in
   let on_frame frame =
     on_raw frame;
-    match decode frame with
+    let decoded = decode frame in
+    on_frame frame decoded;
+    match decoded with
     | Error error ->
       Log.Global.debug_s
         [%message (log_name ^ ": undecodable frame") (frame : string) (error : Error.t)]

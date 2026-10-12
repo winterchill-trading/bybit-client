@@ -8,6 +8,8 @@
     - [messages] carries every decoded message, including acks and pongs; undecodable
       frames are logged at debug level and dropped. Buffered without pushback.
     - [on_raw] is called with every text frame exactly as received, before decoding.
+    - [on_frame] is called with every text frame and its decoding, before the message is
+      written to [messages]; a consumer that only needs a callback avoids a second parse.
     - [time_source] (default the wall clock) drives the keepalive, the watchdog and the
       reconnect backoff, so tests can step them with a synthetic clock. *)
 
@@ -23,6 +25,7 @@ val connect
   -> ?max_backoff:Time_ns.Span.t
   -> ?on_reconnect:(unit -> unit)
   -> ?on_raw:(string -> unit)
+  -> ?on_frame:(string -> Ws_message.t Or_error.t -> unit)
   -> ?time_source:Time_source.t
   -> Config.Read_only.t
   -> t Or_error.t Deferred.t

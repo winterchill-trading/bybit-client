@@ -213,11 +213,12 @@ module Counters = struct
 end
 
 type t =
-  { feed : Md.Feed.t
+  { feed : Md.Feed.With_gaps.t
   ; streams : (Md.Stream.t * Counters.t * Public_ws.t) list
   }
 
-let feed t = t.feed
+let feed t = Md.Feed.With_gaps.to_feed t.feed
+let feed_with_gaps t = t.feed
 
 let stats t =
   List.map t.streams ~f:(fun (stream, (counters : Counters.t), ws) ->
@@ -244,6 +245,12 @@ let connect
   let bbo_r, bbo_w = Pipe.create () in
   let l2_r, l2_w = Pipe.create () in
   let funding_r, funding_w = Pipe.create () in
+  let gaps_r, gaps_w = Pipe.create () in
+  let gap ~recv_ts ~stream ?instrument () =
+    Pipe.write_without_pushback_if_open
+      gaps_w
+      { Md.Gap.recv_ts; venue = Bybit; instrument; stream = Some stream; reason = Resync }
+  in
   let emit : Md.Event.t -> unit = function
     | Trade x -> Pipe.write_without_pushback_if_open trades_w x
     | Bbo x -> Pipe.write_without_pushback_if_open bbo_w x
@@ -254,9 +261,22 @@ let connect
   let connect stream =
     let ws = Set_once.create () in
     let counters = { Counters.frames = 0; parse_errors = 0 } in
+    (* Reconnects already reported as a gap. [on_reconnect] runs after the subscriptions
+       are resent, so a frame of the new connection may arrive first; whichever comes
+       first reports the gap, which then always precedes the new connection's events. *)
+    let reported = ref 0 in
+    let report_reconnect ~recv_ts =
+      Option.iter (Set_once.get ws) ~f:(fun ws ->
+        let reconnects = Public_ws.reconnects ws in
+        if reconnects > !reported
+        then (
+          reported := reconnects;
+          gap ~recv_ts ~stream ()))
+    in
     let on_frame frame decoded =
       let recv_ts = Time_source.now time_source in
       counters.frames <- counters.frames + 1;
+      report_reconnect ~recv_ts;
       Option.iter on_raw ~f:(fun on_raw -> on_raw ~stream ~recv_ts frame);
       match
         Or_error.bind decoded ~f:(fun message ->
@@ -273,10 +293,15 @@ let connect
       | Ok { events; resubscribe } ->
         List.iter events ~f:emit;
         Option.iter (Set_once.get ws) ~f:(fun ws ->
-          List.iter resubscribe ~f:(fun topic ->
+          List.iter resubscribe ~f:(fun (topic : Topic.t) ->
+            (match topic with
+             | Orderbook { symbol; _ } | Public_trade symbol | Tickers symbol ->
+               gap ~recv_ts ~stream ~instrument:(instrument symbol) ()
+             | _ -> gap ~recv_ts ~stream ());
             don't_wait_for (Public_ws.resubscribe ws topic)))
     in
     let on_reconnect () =
+      report_reconnect ~recv_ts:(Time_source.now time_source);
       Log.Global.info "bybit live feed: %s reconnected" (Md.Stream.to_string stream)
     in
     let%bind connection =
@@ -313,14 +338,16 @@ let connect
       Pipe.close trades_w;
       Pipe.close bbo_w;
       Pipe.close l2_w;
-      Pipe.close funding_w)
+      Pipe.close funding_w;
+      Pipe.close gaps_w)
   in
-  let feed : Md.Feed.t =
+  let feed : Md.Feed.With_gaps.t =
     (module struct
       let trades = trades_r
       let bbo = bbo_r
       let l2 = l2_r
       let funding = funding_r
+      let gaps = gaps_r
       let close () = Lazy_deferred.force_exn closed
     end)
   in

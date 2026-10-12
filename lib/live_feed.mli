@@ -21,8 +21,17 @@
 
     Disconnects are handled by {!Public_ws}: it reconnects with exponential backoff and
     resubscribes, and Bybit answers each subscription with a fresh snapshot, which is
-    emitted as usual. Pipes of streams that were not requested stay empty until [close].
-    Writes do not wait for readers, so consumers should keep up. *)
+    emitted as usual.
+
+    Breaks are reported on {!feed_with_gaps}'s [gaps] pipe, always with reason [Resync],
+    [venue = Bybit] and the stream set:
+    - a reconnect of a stream's socket: [instrument = None] (every symbol of that
+      connection), written before any event of the new connection;
+    - a local book sequence gap that resubscribes a topic: [instrument] set, written
+      before the new snapshot.
+
+    Pipes of streams that were not requested stay empty until [close]. Writes do not wait
+    for readers, so consumers should keep up. *)
 
 open! Core
 open Async
@@ -54,6 +63,9 @@ val connect
   -> t Deferred.t
 
 val feed : t -> Market_data.Feed.t
+
+(** The same feed with its [gaps] pipe (see above). *)
+val feed_with_gaps : t -> Market_data.Feed.With_gaps.t
 
 (** One entry per requested stream, in {!Market_data.Stream.compare} order. *)
 val stats : t -> (Market_data.Stream.t * Stats.t) list

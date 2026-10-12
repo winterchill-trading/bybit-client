@@ -9,7 +9,7 @@ let connect
   ?on_reconnect
   ?on_raw
   ?time_source
-  (config : Config.t)
+  (config : Config.Read_only.t)
   =
   Ws_stream.connect
     ?ping_interval
@@ -19,7 +19,7 @@ let connect
     ?on_raw
     ?time_source
     ~log_name:"bybit-client public ws"
-    config.ws_public_url
+    (Config.Read_only.ws_public_url config)
 ;;
 
 let messages = Ws_stream.messages

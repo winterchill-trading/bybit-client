@@ -24,7 +24,7 @@ val connect
   -> ?on_reconnect:(unit -> unit)
   -> ?on_raw:(string -> unit)
   -> ?time_source:Time_source.t
-  -> Config.t
+  -> Config.Read_only.t
   -> t Or_error.t Deferred.t
 
 val messages : t -> Ws_message.t Pipe.Reader.t

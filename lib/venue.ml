@@ -295,7 +295,7 @@ let connect (config : config) =
     let on_reconnect () = Queue.iter reconnect_hooks ~f:(fun f -> f ()) in
     let%bind private_ = Private_ws.connect ~on_reconnect config in
     let%bind public =
-      match%bind.Deferred Public_ws.connect ~on_reconnect config with
+      match%bind.Deferred Public_ws.connect ~on_reconnect (Config.read_only config) with
       | Ok public -> return public
       | Error _ as error ->
         let%bind.Deferred () = Private_ws.close private_ in

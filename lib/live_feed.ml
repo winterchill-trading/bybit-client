@@ -319,6 +319,6 @@ let connect
 ;;
 
 let create ?on_raw ?l2_depth config ~symbols ~streams =
-  let%map t = connect ?on_raw ?l2_depth config ~symbols ~streams in
+  let%map t = connect ?on_raw ?l2_depth (Config.read_only config) ~symbols ~streams in
   feed t
 ;;

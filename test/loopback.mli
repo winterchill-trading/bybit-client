@@ -9,7 +9,7 @@ type t
 val start : unit -> t Deferred.t
 
 (** A config whose public stream is this server. *)
-val config : t -> Bybit_client.Config.t
+val config : t -> Bybit_client.Config.Read_only.t
 
 (** Upgrades accepted so far. *)
 val connections : t -> int

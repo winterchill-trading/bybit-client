@@ -54,7 +54,7 @@ let start () =
 ;;
 
 let config t =
-  Bybit_client.Config.create
+  Bybit_client.Config.Read_only.create
     ~base_url:
       (Uri.of_string (sprintf "http://127.0.0.1:%d" (Tcp.Server.listening_on t.tcp)))
     ()

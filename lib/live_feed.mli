@@ -48,7 +48,7 @@ val connect
   :  ?on_raw:(stream:Market_data.Stream.t -> recv_ts:Time_ns.t -> string -> unit)
   -> ?l2_depth:int
   -> ?time_source:Time_source.t
-  -> Config.t
+  -> Config.Read_only.t
   -> symbols:string list
   -> streams:Market_data.Stream.t list
   -> t Deferred.t
@@ -58,7 +58,7 @@ val feed : t -> Market_data.Feed.t
 (** One entry per requested stream, in {!Market_data.Stream.compare} order. *)
 val stats : t -> (Market_data.Stream.t * Stats.t) list
 
-(** [connect] then [feed]. *)
+(** [connect] then [feed], with the credentials dropped ({!Config.read_only}). *)
 val create
   :  ?on_raw:(stream:Market_data.Stream.t -> recv_ts:Time_ns.t -> string -> unit)
   -> ?l2_depth:int

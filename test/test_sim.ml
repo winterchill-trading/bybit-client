@@ -399,7 +399,7 @@ let%expect_test "public and private streams" =
            ~price:(Price.of_string "99000"))
       |> ok_exn
     in
-    let%bind public = Public_ws.connect other |> ok_exn in
+    let%bind public = Public_ws.connect (Config.read_only other) |> ok_exn in
     let topic : Topic.t = Orderbook { depth = 50; symbol = btc } in
     let%bind () = Public_ws.subscribe public topic in
     let%bind () = Public_ws.subscribe public topic in

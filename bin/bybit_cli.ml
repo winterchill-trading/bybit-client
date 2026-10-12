@@ -94,7 +94,9 @@ let watch_command =
            if List.is_empty topics
            then return None
            else (
-             let%bind ws = Public_ws.connect ~on_reconnect config >>| ok_exn in
+             let%bind ws =
+               Public_ws.connect ~on_reconnect (Config.read_only config) >>| ok_exn
+             in
              let%map () =
                Deferred.List.iter topics ~how:`Sequential ~f:(Public_ws.subscribe ws)
              in

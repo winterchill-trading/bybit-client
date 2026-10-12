@@ -24,3 +24,6 @@ module Venue = Venue
 
 (** Normalized [Market_data.Feed] over the public stream. *)
 module Live_feed = Live_feed
+
+(** {!Live_feed.Normalizer} as a [Market_data.Normalizer.S], for [rebuild-norm]. *)
+module Raw_normalizer = Raw_normalizer

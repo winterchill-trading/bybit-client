@@ -13,8 +13,9 @@ type t =
   { client : Ws_client.t
   ; subscriptions : Topic.t list ref (** in subscription order *)
   ; messages : Ws_message.t Pipe.Reader.t
-  ; ready : unit Ivar.t ref
-  (** filled once the current connection is authenticated (immediately without auth) *)
+  ; ready : bool ref
+  (** the current connection is authenticated (or needs no auth) and its subscriptions
+      have been replayed; until then [subscribe] only records the topic *)
   }
 
 let messages t = t.messages
@@ -23,12 +24,7 @@ let is_connected t = Ws_client.is_connected t.client
 let reconnects t = Ws_client.reconnects t.client
 let send t request = Ws_client.send t.client (encode request)
 let subscribe_request topic = Ws_request.Subscribe { req_id = None; args = [ topic ] }
-
-let send_when_ready t request =
-  let%bind () = Ivar.read !(t.ready) in
-  send t request
-;;
-
+let send_if_ready t request = if !(t.ready) then send t request else return ()
 let mem t topic = List.mem !(t.subscriptions) topic ~equal:Topic.equal
 
 let subscribe t topic =
@@ -36,7 +32,7 @@ let subscribe t topic =
   then return ()
   else (
     t.subscriptions := !(t.subscriptions) @ [ topic ];
-    send_when_ready t (subscribe_request topic))
+    send_if_ready t (subscribe_request topic))
 ;;
 
 let unsubscribe t topic =
@@ -45,15 +41,15 @@ let unsubscribe t topic =
   else (
     t.subscriptions
     := List.filter !(t.subscriptions) ~f:(fun s -> not (Topic.equal s topic));
-    send t (Unsubscribe { req_id = None; args = [ topic ] }))
+    send_if_ready t (Unsubscribe { req_id = None; args = [ topic ] }))
 ;;
 
 let resubscribe t topic =
   if not (mem t topic)
   then subscribe t topic
   else (
-    let%bind () = send_when_ready t (Unsubscribe { req_id = None; args = [ topic ] }) in
-    send t (subscribe_request topic))
+    let%bind () = send_if_ready t (Unsubscribe { req_id = None; args = [ topic ] }) in
+    send_if_ready t (subscribe_request topic))
 ;;
 
 let connect
@@ -67,7 +63,7 @@ let connect
   url
   =
   let subscriptions = ref [] in
-  let ready = ref (Ivar.create ()) in
+  let ready = ref false in
   let auth_ack : Op_response.t Ivar.t option ref = ref None in
   let out_r, out_w = Pipe.create () in
   let on_frame frame =
@@ -103,16 +99,14 @@ let connect
              [%message (log_name ^ ": auth failed") (response : Op_response.t)])
   in
   let on_connect client =
-    (* Senders still waiting on an earlier connection are released together with this one;
-       anything they send is also covered by the replay below. *)
-    let previous = !ready in
-    let this_connection = Ivar.create () in
-    ready := this_connection;
+    ready := false;
     let%bind () = authenticated client in
-    Ivar.fill_if_empty this_connection ();
-    Ivar.fill_if_empty previous ();
+    (* Read the set and mark the stream ready in the same job: a topic subscribed before
+       this point is replayed here, one subscribed after is sent by [subscribe]. *)
+    let topics = !subscriptions in
+    ready := true;
     let%map () =
-      Deferred.List.iter ~how:`Sequential !subscriptions ~f:(fun topic ->
+      Deferred.List.iter ~how:`Sequential topics ~f:(fun topic ->
         Ws_client.send client (encode (subscribe_request topic)))
     in
     if Ws_client.reconnects client > 0 then on_reconnect ()

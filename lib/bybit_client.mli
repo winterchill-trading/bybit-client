@@ -15,3 +15,6 @@ module Local_book = Local_book
 
 (** Authenticated private websocket stream (orders, executions, positions, wallet). *)
 module Private_ws = Private_ws
+
+(** Bybit string order and execution ids to [exchange-core] integer ids. *)
+module Id_map = Id_map

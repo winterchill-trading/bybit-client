@@ -12,3 +12,6 @@ module Public_ws = Public_ws
 
 (** Orderbook snapshot and delta merging with update id checks. *)
 module Local_book = Local_book
+
+(** Authenticated private websocket stream (orders, executions, positions, wallet). *)
+module Private_ws = Private_ws

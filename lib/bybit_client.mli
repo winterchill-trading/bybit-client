@@ -3,3 +3,6 @@
 
 (** Endpoints and credentials. *)
 module Config = Config
+
+(** Public and signed private REST endpoints. *)
+module Rest = Rest

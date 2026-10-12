@@ -28,7 +28,37 @@ let auth_headers (config : Config.t) ~timestamp ~payload =
          ])
 ;;
 
-let decode ~status ~body ~result_of_yojson =
+module Api_error = struct
+  type t =
+    { path : string
+    ; ret_code : int
+    ; error : Envelope.Error.t
+    ; ret_msg : string
+    }
+  [@@deriving sexp_of]
+
+  (* The registered exception printer must be portable, which [Envelope.Error.sexp_of_t]
+     is not: carry the code and rebuild [error] from it. *)
+  exception
+    E of
+      { path : string
+      ; ret_code : int
+      ; ret_msg : string
+      }
+  [@@deriving sexp_of]
+
+  let to_exn { path; ret_code; error = _; ret_msg } = E { path; ret_code; ret_msg }
+
+  let of_error error =
+    match Error.to_exn error with
+    | E { path; ret_code; ret_msg } ->
+      Option.map (Envelope.Error.of_code ret_code) ~f:(fun error ->
+        { path; ret_code; error; ret_msg })
+    | _ -> None
+  ;;
+end
+
+let decode_at ~path ~status ~body ~result_of_yojson =
   let fail error = Or_error.error_s [%message error (status : int) (body : string)] in
   match Yojson.Safe.from_string body with
   | exception _ -> fail "not JSON"
@@ -38,25 +68,32 @@ let decode ~status ~body ~result_of_yojson =
        Or_error.error_s
          [%message "undecodable response" (status : int) (body : string) (exn : exn)]
      | Error { error; ret_msg } ->
-       Or_error.error_s
-         [%message
-           "Bybit error"
-             ~ret_code:(Envelope.Error.to_code error : int)
-             (error : Envelope.Error.t)
-             (ret_msg : string)]
+       Error
+         (Error.of_exn
+            (Api_error.to_exn
+               { path; ret_code = Envelope.Error.to_code error; error; ret_msg }))
      | Ok result ->
        let ext = Option.value (Json.member json ~key:"retExtInfo") ~default:(`Assoc []) in
        Ok (result, ext))
 ;;
 
-let tag ~meth ~path result =
-  Or_error.tag_s result ~tag:[%message (meth : string) (path : string)]
+let decode ~status ~body ~result_of_yojson =
+  decode_at ~path:"" ~status ~body ~result_of_yojson
 ;;
 
+(* Venue rejections are left untagged so that [Api_error.of_error] finds them. *)
 let finish ~meth ~path ~result_of_yojson response =
-  (let%bind.Or_error status, body = response in
-   decode ~status ~body ~result_of_yojson)
-  |> tag ~meth ~path
+  match response with
+  | Error error ->
+    Error (Error.tag_s error ~tag:[%message (meth : string) (path : string)])
+  | Ok (status, body) ->
+    (match decode_at ~path ~status ~body ~result_of_yojson with
+     | Ok _ as ok -> ok
+     | Error error as result ->
+       (match Api_error.of_error error with
+        | Some _ -> result
+        | None ->
+          Error (Error.tag_s error ~tag:[%message (meth : string) (path : string)])))
 ;;
 
 let get_public config ~path ~query ~result_of_yojson =

@@ -14,6 +14,21 @@ open! Core
 open Async
 open Bybit_protocol
 
+(** A non-zero [retCode]. Such errors carry the structured value inside the [Error.t], so
+    callers can tell a venue rejection from a transport failure. *)
+module Api_error : sig
+  type t =
+    { path : string (** the endpoint, [""] from {!decode} *)
+    ; ret_code : int
+    ; error : Envelope.Error.t
+    ; ret_msg : string
+    }
+  [@@deriving sexp_of]
+
+  (** [Some] when [error] is a venue rejection. *)
+  val of_error : Error.t -> t option
+end
+
 (** {2 Transport} *)
 
 (** [key=value&...] in the given order, values percent-encoded as query values. This exact

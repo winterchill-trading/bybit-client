@@ -117,7 +117,8 @@ val wallet_balance   : ?account_type:string -> Config.t -> Wallet_balance.t ...
 
 ```ocaml
 val Public_ws.connect : ?ping_interval -> ?initial_backoff -> ?max_backoff
-  -> ?on_reconnect:(unit -> unit) -> Config.t -> Public_ws.t Or_error.t Deferred.t
+  -> ?on_reconnect:(unit -> unit) -> ?on_raw:(string -> unit) -> Config.t
+  -> Public_ws.t Or_error.t Deferred.t
 val Public_ws.subscribe / unsubscribe / resubscribe : t -> Topic.t -> unit Deferred.t
 val Public_ws.messages : t -> Ws_message.t Pipe.Reader.t
 

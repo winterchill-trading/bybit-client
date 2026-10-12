@@ -248,11 +248,14 @@ let connect
   let connect stream =
     let ws = Set_once.create () in
     let counters = { Counters.frames = 0; parse_errors = 0 } in
-    let on_raw frame =
+    let on_frame frame decoded =
       let recv_ts = Time_source.now time_source in
       counters.frames <- counters.frames + 1;
       Option.iter on_raw ~f:(fun on_raw -> on_raw ~stream ~recv_ts frame);
-      match Normalizer.frame normalizer ~recv_ts frame with
+      match
+        Or_error.bind decoded ~f:(fun message ->
+          Or_error.try_with (fun () -> Normalizer.message normalizer ~recv_ts message))
+      with
       | Error error ->
         counters.parse_errors <- counters.parse_errors + 1;
         Log.Global.error_s
@@ -271,10 +274,10 @@ let connect
       Log.Global.info "bybit live feed: %s reconnected" (Md.Stream.to_string stream)
     in
     let%bind connection =
-      Public_ws.connect ~on_reconnect ~on_raw ~time_source config >>| Or_error.ok_exn
+      Public_ws.connect ~on_reconnect ~on_frame ~time_source config >>| Or_error.ok_exn
     in
     Set_once.set_exn ws connection;
-    (* Frames are handled in [on_raw]; nobody reads the decoded copies. *)
+    (* Frames are handled in [on_frame]; nobody reads the pipe. *)
     Pipe.close_read (Public_ws.messages connection);
     let%map () =
       Deferred.List.iter symbols ~how:`Sequential ~f:(fun symbol ->

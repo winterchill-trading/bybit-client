@@ -1,6 +1,8 @@
 (library
  (name bybit_client_test)
  (inline_tests
+  (deps
+   (glob_files fixtures/*.jsonl))
   (flags
    (:standard -source-tree-root .)))
  (libraries

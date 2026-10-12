@@ -13,7 +13,8 @@ type t
     [auth_timeout], logging an error). A failed auth is logged and the subscriptions are
     still sent (the server will refuse them).
 
-    [on_raw] sees every text frame, unparsed, before it is decoded. *)
+    [on_raw] sees every text frame, unparsed, before it is decoded. [time_source] (default
+    the wall clock) drives the keepalive, watchdog, reconnect backoff and auth timeout. *)
 val connect
   :  ?ping_interval:Time_ns.Span.t
   -> ?initial_backoff:Time_ns.Span.t
@@ -22,6 +23,7 @@ val connect
   -> ?on_raw:(string -> unit)
   -> ?authenticate:(unit -> Ws_request.t)
   -> ?auth_timeout:Time_ns.Span.t
+  -> ?time_source:Time_source.t
   -> log_name:string
   -> Uri.t
   -> t Or_error.t Deferred.t

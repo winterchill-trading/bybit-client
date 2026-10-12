@@ -7,7 +7,9 @@
       (the server answers with fresh snapshots) and then calls [on_reconnect].
     - [messages] carries every decoded message, including acks and pongs; undecodable
       frames are logged at debug level and dropped. Buffered without pushback.
-    - [on_raw] is called with every text frame exactly as received, before decoding. *)
+    - [on_raw] is called with every text frame exactly as received, before decoding.
+    - [time_source] (default the wall clock) drives the keepalive, the watchdog and the
+      reconnect backoff, so tests can step them with a synthetic clock. *)
 
 open! Core
 open Async
@@ -21,6 +23,7 @@ val connect
   -> ?max_backoff:Time_ns.Span.t
   -> ?on_reconnect:(unit -> unit)
   -> ?on_raw:(string -> unit)
+  -> ?time_source:Time_source.t
   -> Config.t
   -> t Or_error.t Deferred.t
 

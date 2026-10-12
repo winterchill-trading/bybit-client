@@ -60,6 +60,7 @@ let connect
   ?(on_raw = fun (_ : string) -> ())
   ?authenticate
   ?(auth_timeout = Time_ns.Span.of_int_sec 10)
+  ?(time_source = Time_source.wall_clock ())
   ~log_name
   url
   =
@@ -92,7 +93,7 @@ let connect
       let ivar = Ivar.create () in
       auth_ack := Some ivar;
       let%bind () = Ws_client.send client (encode (request ())) in
-      (match%map Clock_ns.with_timeout auth_timeout (Ivar.read ivar) with
+      (match%map Time_source.with_timeout time_source auth_timeout (Ivar.read ivar) with
        | `Timeout -> Log.Global.error "%s: no auth ack" log_name
        | `Result response ->
          if Op_response.is_failure response
@@ -120,6 +121,7 @@ let connect
       ~initial_backoff
       ~max_backoff
       ~on_connect
+      ~time_source
       ~log_name
       ~url
       ()

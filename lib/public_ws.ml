@@ -8,6 +8,7 @@ let connect
   ?max_backoff
   ?on_reconnect
   ?on_raw
+  ?time_source
   (config : Config.t)
   =
   Ws_stream.connect
@@ -16,6 +17,7 @@ let connect
     ?max_backoff
     ?on_reconnect
     ?on_raw
+    ?time_source
     ~log_name:"bybit-client public ws"
     config.ws_public_url
 ;;

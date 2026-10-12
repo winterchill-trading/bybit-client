@@ -453,11 +453,11 @@ let resolve t (acked : (Symbol.t * Order_id.t) list) =
   List.iter (List.concat open_by_symbol) ~f:(fun (o : Realtime_order.t) ->
     Hashtbl.set known ~key:o.order_id ~data:o);
   let%map () =
-    Deferred.List.iter ~how:`Parallel acked ~f:(fun (_, order_id) ->
+    Deferred.List.iter ~how:`Parallel acked ~f:(fun (symbol, order_id) ->
       if Hashtbl.mem known order_id
       then return ()
       else (
-        match%map Rest.realtime_orders ~order_id t.config with
+        match%map Rest.realtime_orders ~symbol ~order_id t.config with
         | Ok orders ->
           List.iter orders ~f:(fun (o : Realtime_order.t) ->
             if Order_id.equal o.order_id order_id

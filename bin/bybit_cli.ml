@@ -173,6 +173,7 @@ let () =
     ; "tickers", tickers_command
     ; "watch", watch_command
     ; "feed", feed_command
+    ; "rebuild-norm", Market_data.Rebuild_norm.command [ (module Raw_normalizer) ]
     ]
   |> Command_unix.run
 ;;

@@ -6,3 +6,6 @@ module Config = Config
 
 (** Public and signed private REST endpoints. *)
 module Rest = Rest
+
+(** Public websocket stream with ping, reconnect and resubscription. *)
+module Public_ws = Public_ws

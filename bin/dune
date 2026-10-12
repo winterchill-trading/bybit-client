@@ -8,6 +8,7 @@
   core_unix.command_unix
   bybit-client
   bybit-protocol
+  market-data
   uri)
  (preprocess
   (pps ppx_jane)))

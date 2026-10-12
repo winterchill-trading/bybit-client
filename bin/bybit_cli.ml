@@ -1,7 +1,8 @@
 (* Command-line smoke tests for bybit-client, e.g. against the simulator:
 
    bybit-cli orderbook BTCUSDT bybit-cli tickers -testnet bybit-cli watch -orderbook
-   BTCUSDT -trades BTCUSDT BYBIT_API_KEY=mm bybit-cli watch -private *)
+   BTCUSDT -trades BTCUSDT BYBIT_API_KEY=mm bybit-cli watch -private bybit-cli feed
+   -symbol BTCUSDT -streams trades,bbo *)
 
 open! Core
 open Async
@@ -111,9 +112,65 @@ let watch_command =
            Pipe.iter_without_pushback messages ~f:print)))
 ;;
 
+let feed_command =
+  Command.async
+    ~summary:
+      "Print normalized market data (Market_data.Event.t sexps) from the public stream"
+    (let%map_open.Command config = config_param
+     and symbols =
+       flag
+         "symbol"
+         (one_or_more_as_list string)
+         ~doc:"SYMBOL instrument, e.g. BTCUSDT (repeat or comma-separate for several)"
+     and streams =
+       flag
+         "streams"
+         (optional_with_default
+            [ Market_data.Stream.Trades; Bbo ]
+            (Arg_type.comma_separated
+               ~allow_empty:false
+               (Arg_type.create Market_data.Stream.of_string)))
+         ~doc:"LIST trades, bbo, l2, funding (default trades,bbo)"
+     and l2_depth =
+       flag "depth" (optional int) ~doc:"N orderbook depth for l2 (default 50)"
+     and count = flag "count" (optional int) ~doc:"N exit after N events" in
+     fun () ->
+       let symbols = List.concat_map symbols ~f:(String.split ~on:',') in
+       let%bind feed = Live_feed.create ?l2_depth config ~symbols ~streams in
+       let module Feed = (val feed : Market_data.Feed.S) in
+       let printed = ref 0 in
+       let done_ = Ivar.create () in
+       let print (event : Market_data.Event.t) =
+         if Ivar.is_empty done_
+         then (
+           print_s [%sexp (event : Market_data.Event.t)];
+           incr printed;
+           match count with
+           | Some count when !printed >= count -> Ivar.fill_if_empty done_ ()
+           | _ -> ())
+       in
+       let iter pipe ~f = Pipe.iter_without_pushback pipe ~f:(fun x -> print (f x)) in
+       don't_wait_for
+         (let%map () =
+            Deferred.all_unit
+              [ iter Feed.trades ~f:(fun x -> Market_data.Event.Trade x)
+              ; iter Feed.bbo ~f:(fun x -> Market_data.Event.Bbo x)
+              ; iter Feed.l2 ~f:(fun x -> Market_data.Event.L2 x)
+              ; iter Feed.funding ~f:(fun x -> Market_data.Event.Funding x)
+              ]
+          in
+          Ivar.fill_if_empty done_ ());
+       let%bind () = Ivar.read done_ in
+       Feed.close ())
+;;
+
 let () =
   Command.group
     ~summary:"Bybit v5 API client (category linear)"
-    [ "orderbook", orderbook_command; "tickers", tickers_command; "watch", watch_command ]
+    [ "orderbook", orderbook_command
+    ; "tickers", tickers_command
+    ; "watch", watch_command
+    ; "feed", feed_command
+    ]
   |> Command_unix.run
 ;;

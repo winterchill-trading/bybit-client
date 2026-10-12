@@ -1,0 +1,10 @@
+(executable
+ (name main)
+ (libraries
+  core
+  core_unix.command_unix
+  core_bench
+  bybit-client
+  bybit-protocol)
+ (preprocess
+  (pps ppx_jane)))

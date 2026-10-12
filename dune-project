@@ -34,5 +34,6 @@
   ppx_yojson_conv
   yojson
   uri
+  (core_bench :with-test)
   (bybit-sim :with-test)
   (exchange-core-engine :with-test)))

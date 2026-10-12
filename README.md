@@ -185,6 +185,7 @@ val Live_feed.connect
   -> Config.Read_only.t -> symbols:string list -> streams:Market_data.Stream.t list
   -> Live_feed.t Deferred.t
 val Live_feed.feed  : t -> Market_data.Feed.t
+val Live_feed.feed_with_gaps : t -> Market_data.Feed.With_gaps.t
 val Live_feed.stats : t -> (Market_data.Stream.t * Stats.t) list
   (* Stats.t = { frames; parse_errors; reconnects } per stream *)
 
@@ -217,8 +218,43 @@ stream, so a frame's stream is known before it is parsed:
   snapshot resynchronises. Ticker deltas are merged into the last snapshot.
 - Reconnects (backoff, resubscription) come from `Public_ws`; Bybit answers each
   subscription with a fresh snapshot, so `l2` emits a `Snapshot` after a reconnect.
+- `feed_with_gaps` adds a `gaps` pipe of `Market_data.Gap.t`, all with reason `Resync`:
+  one per reconnect of a stream's socket (`instrument = None`, the whole connection) and
+  one per book sequence gap (`instrument` set). A gap is written before any event of the
+  new connection or the new snapshot, and is stamped from `time_source`. `feed` is the
+  same feed without that pipe.
 - Undecodable frames are logged, never fatal. `close` closes the sockets and all pipes.
 - `Live_feed.Normalizer` is the pure frame-to-event part, used by the tests.
+
+#### Reconnect frame loss
+
+Bybit's public stream has no replay: nothing sent between the old socket's last frame
+and the new socket's subscription is ever delivered. The window is
+
+1. detection: immediate on a close or reset; a half-open socket is replaced after two
+   silent 20 s ping intervals, so 40 to 60 s after its last frame;
+2. backoff: 0.5 s with 20% jitter for the first attempt (0.4 to 0.6 s), doubling up to
+   30 s while attempts fail;
+3. connect, TLS and the subscribe round trip.
+
+What the window costs per stream:
+
+| stream    | lost                                   | recovered by                        |
+|-----------|----------------------------------------|-------------------------------------|
+| `trades`  | every print in the window, for good    | nothing (no history on subscribe)   |
+| `bbo`     | intermediate top-of-book changes       | the `orderbook.1` snapshot          |
+| `l2`      | intermediate deltas                    | the `orderbook.<depth>` snapshot    |
+| `funding` | intermediate rate, mark, index changes | the `tickers` snapshot              |
+
+Measured on the synthetic clock (`test_live_feed_stats.ml`, `test_live_feed_gaps.ml`,
+loopback server, socket dropped at t = 0): the client opens no connection before the
+backoff alarm, which falls between 0.4 and 0.6 s; after one advance of 1 s it has
+reconnected and resubscribed (`connections 2`, `reconnects 1`), and the first frame of
+the new socket is stamped `recv_ts` = 1.000 s with the `Resync` gap stamped the same and
+written before it. Frames pushed to the old socket after the drop: none delivered, the
+loopback has no connection to send them on. A sequence gap costs one more round trip
+(unsubscribe, subscribe, snapshot) with the deltas in between dropped; its gap is stamped
+with the frame that broke the sequence.
 
 ### `Raw_normalizer`: rebuilding `norm/` from raw files
 
@@ -387,7 +423,8 @@ secrets should never be committed or passed on the command line. The clock must 
 - `Live_feed` against a loopback websocket server: malformed frames counted as parse
   errors and skipped, a reconnect stepped on a synthetic `Time_source` (no reconnect
   before the backoff elapses, resubscription after it, `recv_ts` from the synthetic
-  clock, `reconnects = 1`), and an allocation bound for the single-decode live path;
+  clock, `reconnects = 1`), `Resync` gaps on a reconnect and on a book sequence gap,
+  and an allocation bound for the single-decode live path;
 - an integration test that starts `Bybit_sim.Server` on a free port and exercises every
   `Rest` endpoint, both websocket streams (subscribe, resubscribe snapshot, both pong
   shapes, auth, private pushes), and the `Venue` adapter end to end: books, a post-only

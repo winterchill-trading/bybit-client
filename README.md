@@ -378,12 +378,14 @@ so the integration test leaves timestamps out of its output.
 root, or set `BYBIT_FIXTURES`): decode, normalize a decoded message, and both, per frame
 and stream. On an M-series Mac:
 
-| stream (bytes/frame) | decode            | normalize       | decode + normalize |
-| -------------------- | ----------------- | --------------- | ------------------ |
-| trades (452)         | 7.3 us, 818 words | 33 ns, 46 words | 5.3 us, 867 words  |
-| bbo (195)            | 2.6 us, 506 words | 158 ns, 122     | 2.7 us, 632 words  |
-| l2 (366)             | 5.8 us, 1112 w    | 646 ns, 492 w   | 6.5 us, 1608 words |
-| funding (236)        | 2.8 us, 502 words | 85 ns, 34 words | 2.9 us, 540 words  |
+Time per frame, minor words per frame in brackets:
+
+| stream (bytes/frame) | decode         | normalize    | decode + normalize |
+| -------------------- | -------------- | ------------ | ------------------ |
+| trades (452)         | 7.3 us (818)   | 33 ns (46)   | 5.3 us (867)       |
+| bbo (195)            | 2.6 us (506)   | 158 ns (122) | 2.7 us (632)       |
+| l2 (366)             | 5.8 us (1112)  | 646 ns (492) | 6.5 us (1608)      |
+| funding (236)        | 2.8 us (502)   | 85 ns (34)   | 2.9 us (540)       |
 
 ```sh
 dune exec bench/main.exe -- -quota 1 -ascii

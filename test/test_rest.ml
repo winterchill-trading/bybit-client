@@ -36,6 +36,24 @@ let%expect_test "config" =
   [%expect {| wss://stream-testnet.bybit.com/v5/private |}]
 ;;
 
+let%expect_test "read-only config carries no credentials" =
+  print_s [%sexp (Config.read_only (config ~api_secret:"secret" ()) : Config.Read_only.t)];
+  print_s [%sexp (Config.Read_only.mainnet () : Config.Read_only.t)];
+  print_s
+    [%sexp
+      (Config.Read_only.create ~base_url:(Uri.of_string "http://127.0.0.1:3471") ()
+       : Config.Read_only.t)];
+  [%expect
+    {|
+    ((base_url https://api-testnet.bybit.com)
+     (ws_public_url wss://api-testnet.bybit.com/v5/public/linear))
+    ((base_url https://api.bybit.com)
+     (ws_public_url wss://stream.bybit.com/v5/public/linear))
+    ((base_url http://127.0.0.1:3471)
+     (ws_public_url ws://127.0.0.1:3471/v5/public/linear))
+    |}]
+;;
+
 let%expect_test "query strings are sent and signed as built" =
   print_endline
     (Rest.query_string [ "category", "linear"; "symbol", "BTCUSDT"; "x", "a b&c" ]);

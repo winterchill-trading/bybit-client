@@ -236,8 +236,8 @@ let amend_order ?order_id ?order_link_id ?qty ?price config ~symbol =
 
 let realtime_orders ?symbol ?settle_coin ?order_id ?order_link_id config =
   let settle_coin =
-    match symbol, settle_coin, order_id, order_link_id with
-    | None, None, None, None -> Some "USDT"
+    match symbol, settle_coin with
+    | None, None -> Some "USDT"
     | _ -> settle_coin
   in
   get_private

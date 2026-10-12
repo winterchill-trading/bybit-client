@@ -120,8 +120,9 @@ val amend_order
 
 (** {2 Account (private)} *)
 
-(** [GET /v5/order/realtime]: open orders, or the given order whatever its status. Give
-    [symbol] or [settle_coin] (defaults to ["USDT"] when neither nor an id is given). *)
+(** [GET /v5/order/realtime]: open orders, or the given order whatever its status.
+    [settle_coin] defaults to ["USDT"] when no [symbol] is given (one of them is required
+    for [linear], also when looking up an id). *)
 val realtime_orders
   :  ?symbol:Symbol.t
   -> ?settle_coin:string

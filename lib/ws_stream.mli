@@ -11,12 +11,15 @@ type t
 (** [authenticate], when given, produces the [auth] request sent first on every
     connection; subscriptions are replayed once the [Auth_ack] arrives (or after
     [auth_timeout], logging an error). A failed auth is logged and the subscriptions are
-    still sent (the server will refuse them). *)
+    still sent (the server will refuse them).
+
+    [on_raw] sees every text frame, unparsed, before it is decoded. *)
 val connect
   :  ?ping_interval:Time_ns.Span.t
   -> ?initial_backoff:Time_ns.Span.t
   -> ?max_backoff:Time_ns.Span.t
   -> ?on_reconnect:(unit -> unit)
+  -> ?on_raw:(string -> unit)
   -> ?authenticate:(unit -> Ws_request.t)
   -> ?auth_timeout:Time_ns.Span.t
   -> log_name:string

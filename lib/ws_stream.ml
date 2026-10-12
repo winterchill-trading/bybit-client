@@ -57,6 +57,7 @@ let connect
   ?(initial_backoff = Time_ns.Span.of_ms 500.)
   ?(max_backoff = Time_ns.Span.of_int_sec 30)
   ?(on_reconnect = fun () -> ())
+  ?(on_raw = fun (_ : string) -> ())
   ?authenticate
   ?(auth_timeout = Time_ns.Span.of_int_sec 10)
   ~log_name
@@ -67,6 +68,7 @@ let connect
   let auth_ack : Op_response.t Ivar.t option ref = ref None in
   let out_r, out_w = Pipe.create () in
   let on_frame frame =
+    on_raw frame;
     match decode frame with
     | Error error ->
       Log.Global.debug_s

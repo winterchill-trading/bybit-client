@@ -43,3 +43,23 @@ val testnet : ?api_key:string -> ?api_secret:string -> unit -> t
 val uri : t -> path:string -> query:string -> Uri.t
 
 val ws_url_of_base_url : Uri.t -> path:string -> Uri.t
+
+(** The public endpoints only, for market data. There is no credential field, so nothing
+    built from a [Read_only.t] can sign a request or authenticate a stream; functions that
+    trade take a full {!t}. *)
+module Read_only : sig
+  type t [@@deriving sexp_of]
+
+  val base_url : t -> Uri.t
+  val ws_public_url : t -> Uri.t
+
+  (** [ws_public_url] defaults as in {!create}. *)
+  val create : ?ws_public_url:Uri.t -> base_url:Uri.t -> unit -> t
+
+  val local : ?port:int -> unit -> t
+  val mainnet : unit -> t
+  val testnet : unit -> t
+end
+
+(** Drops the credentials and the private stream. *)
+val read_only : t -> Read_only.t

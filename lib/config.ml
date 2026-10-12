@@ -82,3 +82,37 @@ let uri t ~path ~query =
   let base = Uri.to_string t.base_url |> String.chop_suffix_if_exists ~suffix:"/" in
   Uri.of_string (if String.is_empty query then base ^ path else base ^ path ^ "?" ^ query)
 ;;
+
+type config = t
+
+module Read_only = struct
+  type t =
+    { base_url : Uri.t
+    ; ws_public_url : Uri.t
+    }
+
+  let sexp_of_t { base_url; ws_public_url } =
+    [%sexp
+      { base_url : string = Uri.to_string base_url
+      ; ws_public_url : string = Uri.to_string ws_public_url
+      }]
+  ;;
+
+  let base_url t = t.base_url
+  let ws_public_url t = t.ws_public_url
+
+  let create ?ws_public_url ~base_url () =
+    let ws_public_url =
+      Option.value_or_thunk ws_public_url ~default:(fun () ->
+        ws_url_of_base_url base_url ~path:"/v5/public/linear")
+    in
+    { base_url; ws_public_url }
+  ;;
+
+  let of_config ({ base_url; ws_public_url; _ } : config) = { base_url; ws_public_url }
+  let local ?port () = of_config (local ?port ())
+  let mainnet () = of_config (mainnet ())
+  let testnet () = of_config (testnet ())
+end
+
+let read_only = Read_only.of_config

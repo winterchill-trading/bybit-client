@@ -152,8 +152,9 @@ val Private_ws.connect : ... -> ?subscribe:Topic.t list -> Config.t -> ...
   `{"op":"auth","args":[apiKey, expires, HMAC-SHA256(secret, "GET/realtime" ^ expires)]}`
   (`expires` 10 s ahead), waits for the auth ack, then replays the subscriptions. The
   public stream replays its subscriptions directly. `on_reconnect` runs afterwards.
-- `on_raw` sees each frame before decoding, `on_frame` sees it with its (single)
-  decoding; `time_source` (default the wall clock) drives the keepalive, the watchdog and
+- `on_raw` sees each frame before decoding; `intercept` can then claim it (it is not
+  decoded, not passed on and not written to `messages`); `on_frame` sees every other
+  frame with its (single) decoding; `time_source` (default the wall clock) drives the keepalive, the watchdog and
   the backoff, so tests can step reconnects with a synthetic clock.
 - `subscribe` is idempotent. A topic subscribed while a connection is still
   authenticating is sent by the replay, so it goes out once.
@@ -173,7 +174,8 @@ removes a level, any other size sets it. `apply` returns `Applied`, `Stale` (`u`
 above the current one), `Waiting_for_snapshot` (before the first snapshot or after a gap)
 or `Gap { expected; received }`, after which the book is dropped until a new snapshot.
 `to_l2 ?depth` gives an `Exchange_core.L2.t` (order counts `n = 0`, which Bybit does not
-send).
+send); `best_bid` and `best_ask` give the top level without building it. `apply_scan`
+applies a frame read by `Frame_scan` with the same rules.
 
 ### `Live_feed`: normalized market data
 
@@ -209,9 +211,11 @@ stream, so a frame's stream is known before it is parsed:
 - `recv_ts` is taken from `time_source` (default the wall clock) when the frame arrives;
   `on_raw` gets that frame unparsed first (acks and pongs included), which is what a
   `Frame_log` recorder stores.
-- Each frame is decoded once (`Public_ws`'s `on_frame`) and then normalized. Decoding
-  twice, as before, cost 2861 minor words and 14.3 us per `orderbook.50` frame through a
-  loopback socket; once costs 1747 words and 8.5 us.
+- Trade and orderbook frames are read by `Frame_scan` (no JSON tree; see below) through
+  `Public_ws`'s `intercept` hook; every other frame (acks, pongs, tickers, unusual
+  shapes) is decoded once with Yojson (`on_frame`) and then normalized. The topic string,
+  symbol, `Instrument.t` and local book are cached per subscription, so a scanned frame
+  allocates only its events.
 - `stats` counts frames, parse errors (frames that do not decode or normalize; they are
   logged and skipped) and reconnects, per stream.
 - Books go through `Local_book`; a sequence gap resubscribes the topic and the next
@@ -224,7 +228,24 @@ stream, so a frame's stream is known before it is parsed:
   new connection or the new snapshot, and is stamped from `time_source`. `feed` is the
   same feed without that pipe.
 - Undecodable frames are logged, never fatal. `close` closes the sockets and all pipes.
-- `Live_feed.Normalizer` is the pure frame-to-event part, used by the tests.
+- `Live_feed.Normalizer` is the pure frame-to-event part, used by the tests and by
+  `Raw_normalizer`: `frame` scans then falls back to Yojson, `scan` is the fast path
+  alone, `message` normalizes an already decoded message.
+
+#### `Frame_scan`: the zero-allocation path
+
+`Frame_scan.scan` is `[@zero_alloc]` (checked by the compiler) and reads a
+`publicTrade.<symbol>` or `orderbook.<depth>.<symbol>` frame into a reused record:
+prices and sizes as `Fixed_decimal` units, timestamps as integer milliseconds, strings as
+positions into the frame. It walks the JSON object (any key order, unknown keys skipped)
+and returns `false`, leaving the frame to Yojson, for anything outside the shapes Bybit
+sends: other topics (rejected as soon as the topic is read), `op` frames, escaped
+strings, string timestamps, exponents or signs in decimals, more than 10 integer digits,
+missing fields, more than 1024 levels per side or trades per frame. Values of fields the
+normalizer does not use are skipped without validation, so a frame that is malformed only
+there is accepted by the scanner but rejected by Yojson. A test runs every recorded frame
+through both paths and requires identical outputs, and `Local_book.apply_scan` is checked
+against `Local_book.apply` the same way.
 
 #### Reconnect frame loss
 
@@ -414,8 +435,10 @@ secrets should never be committed or passed on the command line. The clock must 
   funding, acks, unknown topics and junk;
 - recorded mainnet frames (`test/fixtures`, 20 s of BTCUSDT per stream, see its README):
   every frame decodes, and the normalizer turns them into 487 trades, 579 BBOs, 1 L2
-  snapshot plus 849 deltas, and 42 funding records with no parse error or gap; minor
-  words per frame for decoding and normalizing are pinned;
+  snapshot plus 849 deltas, and 42 funding records with no parse error or gap; the
+  scanner and Yojson paths give identical outputs on every frame (1653 of 1837 frames
+  scanned); minor words per frame for decoding, normalizing and `Normalizer.frame` are
+  pinned, and `Frame_scan.scan` allocates 0 words over every trade and book frame;
 - the same fixtures through `Raw_normalizer` (same counts; after a `disconnect` deltas
   are dropped until a snapshot), and `Market_data.Rebuild_norm` over raw minute files
   written from them with a disconnect in the L2 series: 1837 frames, 1507 events, four
@@ -438,23 +461,30 @@ so the integration test leaves timestamps out of its output.
 ## Benchmarks
 
 `bench/main.exe` runs core_bench over the recorded frames (run it from the repository
-root, or set `BYBIT_FIXTURES`): decode, normalize a decoded message, and both, per frame
-and stream. On an M-series Mac:
+root, or set `BYBIT_FIXTURES`): Yojson decode, `Frame_scan.scan`, normalize a decoded
+message, and `Normalizer.frame` (scan, else decode and normalize), per frame and stream.
 
-Time per frame, minor words per frame in brackets:
+`Normalizer.frame` per frame, minor words in brackets, on an arm64 Mac (shared and busy,
+so times are within about 10%; words are exact; CI is amd64). Before is the Yojson path
+(`8c2d766`), after is the scanner:
 
-| stream (bytes/frame) | decode         | normalize    | decode + normalize |
-| -------------------- | -------------- | ------------ | ------------------ |
-| trades (452)         | 7.3 us (818)   | 33 ns (46)   | 5.3 us (867)       |
-| bbo (195)            | 2.6 us (506)   | 158 ns (122) | 2.7 us (632)       |
-| l2 (366)             | 5.8 us (1112)  | 646 ns (492) | 6.5 us (1608)      |
-| funding (236)        | 2.8 us (502)   | 85 ns (34)   | 2.9 us (540)       |
+| stream (bytes/frame) | dev before    | dev after    | release before | release after | `-O3` before  | `-O3` after  |
+| -------------------- | ------------- | ------------ | -------------- | ------------- | ------------- | ------------ |
+| trades (452)         | 5.6 us (806)  | 1.1 us (54)  | 4.9 us (801)   | 1.1 us (54)   | 4.9 us (800)  | 1.0 us (52)  |
+| bbo (195)            | 2.6 us (577)  | 0.52 us (77) | 2.5 us (573)   | 0.47 us (73)  | 2.5 us (564)  | 0.43 us (45) |
+| l2 (366)             | 6.0 us (1327) | 1.5 us (536) | 5.3 us (1323)  | 1.4 us (528)  | 5.3 us (1321) | 1.3 us (484) |
+| funding (236)        | 2.7 us (473)  | 2.6 us (473) | 2.6 us (469)   | 2.7 us (469)  | 2.5 us (467)  | 2.6 us (467) |
+
+`Frame_scan.scan` alone (release): trades 1.0 us, bbo 0.40 us, l2 0.72 us, 0 words (the
+bench shows 3, its own closure overhead); a ticker frame is rejected in 59 ns. What the
+scanned path still allocates is the events themselves (records, level lists, trade id
+strings) and the local book's map updates; funding frames stay on Yojson.
 
 ```sh
 dune exec bench/main.exe -- -quota 1 -ascii
+dune exec --profile release bench/main.exe -- -quota 1 -ascii
+OCAMLPARAM='_,O3=1' dune exec --profile release bench/main.exe -- -quota 1 -ascii
 ```
-
-JSON decoding dominates; the normalizer itself is well under a microsecond per frame.
 
 ## UNVERIFIED
 

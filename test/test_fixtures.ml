@@ -136,6 +136,8 @@ let pinned =
   ]
 ;;
 
+(* The pins are the macOS arm64 counts; amd64 CI can differ by a few words, which
+   [near] allows for (8 words or 1%, whichever is larger). *)
 let near ~expected actual =
   if abs (actual - expected) <= Int.max 8 (expected / 100) then expected else actual
 ;;

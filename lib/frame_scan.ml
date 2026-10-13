@@ -363,6 +363,14 @@ let[@zero_alloc] trades t s =
   t.trades <- count
 ;;
 
+let[@zero_alloc] is_trades_topic t s =
+  t.topic_len > 12 && equal_sub s ~pos:t.topic_pos ~len:12 "publicTrade."
+;;
+
+let[@zero_alloc] is_book_topic t s =
+  t.topic_len > 10 && equal_sub s ~pos:t.topic_pos ~len:10 "orderbook."
+;;
+
 let[@zero_alloc] frame t s =
   t.pos <- 0;
   expect t s '{';
@@ -375,6 +383,8 @@ let[@zero_alloc] frame t s =
       string t s;
       t.topic_pos <- t.str_pos;
       t.topic_len <- t.str_len;
+      (* give up early on other topics (tickers) instead of reading their data *)
+      if not (is_trades_topic t s || is_book_topic t s) then fail ();
       seen <- seen lor 1)
     else if is_key t s "type"
     then (
@@ -411,8 +421,8 @@ let[@zero_alloc] frame t s =
   if seen <> 15 || t.pos <> String.length s then fail ();
   let prefix_ok =
     match t.kind with
-    | Trades -> t.topic_len > 12 && equal_sub s ~pos:t.topic_pos ~len:12 "publicTrade."
-    | Book -> t.topic_len > 10 && equal_sub s ~pos:t.topic_pos ~len:10 "orderbook."
+    | Trades -> is_trades_topic t s
+    | Book -> is_book_topic t s
   in
   if not prefix_ok then fail ()
 ;;

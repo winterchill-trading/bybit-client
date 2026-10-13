@@ -10,6 +10,9 @@ module Rest = Rest
 (** Public websocket stream with ping, reconnect and resubscription. *)
 module Public_ws = Public_ws
 
+(** Zero-allocation scanner for public trade and orderbook frames. *)
+module Frame_scan = Frame_scan
+
 (** Orderbook snapshot and delta merging with update id checks. *)
 module Local_book = Local_book
 

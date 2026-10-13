@@ -107,3 +107,38 @@ let%expect_test "pushes for another symbol raise" =
     print_s [%sexp (exn : exn)];
     [%expect {| ("Local_book.apply: wrong symbol" (book BTCUSDT) (push ETHUSDT)) |}]
 ;;
+
+let%expect_test "apply_scan agrees with apply on every recorded orderbook frame" =
+  List.iter [ "bbo"; "l2" ] ~f:(fun stream ->
+    let frames = In_channel.read_lines ("fixtures/" ^ stream ^ ".jsonl") in
+    let scan = Frame_scan.create () in
+    let symbol = Symbol.of_string "BTCUSDT" in
+    let by_decode = Local_book.create symbol
+    and by_scan = Local_book.create symbol in
+    let compared = ref 0 in
+    List.iter frames ~f:(fun frame ->
+      match Public_ws.For_testing.decode frame with
+      | Ok (Orderbook push) ->
+        assert (Frame_scan.scan scan frame);
+        let expected = Local_book.apply by_decode push in
+        let actual = Local_book.apply_scan by_scan ~frame scan in
+        if not (Local_book.Outcome.equal actual expected)
+        then
+          raise_s
+            [%message (actual : Local_book.Outcome.t) (expected : Local_book.Outcome.t)];
+        [%test_result: Exchange_core.L2.t option]
+          (Local_book.to_l2 by_scan)
+          ~expect:(Local_book.to_l2 by_decode);
+        [%test_result: (Price.t * Size.t) option]
+          (Local_book.best_bid by_scan)
+          ~expect:
+            (Option.bind (Local_book.to_l2 by_decode) ~f:(fun l2 ->
+               List.hd l2.bids |> Option.map ~f:(fun l -> l.px, l.sz)));
+        incr compared
+      | _ -> assert (not (Frame_scan.scan scan frame)));
+    print_s [%message stream ~compared:(!compared : int)]);
+  [%expect {|
+    (bbo (compared 579))
+    (l2 (compared 850))
+    |}]
+;;

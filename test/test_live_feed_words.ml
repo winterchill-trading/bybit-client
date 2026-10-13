@@ -27,6 +27,8 @@ let%expect_test "words per frame added by the live feed and the public websocket
       "words per frame over the floor"
         ~live_feed:(over_floor feed : int)
         ~public_ws:(over_floor public_ws : int)];
-  [%expect {| ("words per frame over the floor" (live_feed 63) (public_ws 483)) |}];
+  (* live_feed was 63 and public_ws 483 while [Ws_stream] read [Ws_client.messages] one
+     frame at a time; [on_message] drops the pipe hop's 13 words. *)
+  [%expect {| ("words per frame over the floor" (live_feed 50) (public_ws 470)) |}];
   Blast_server.close server
 ;;

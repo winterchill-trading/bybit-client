@@ -39,23 +39,99 @@ module Normalizer = struct
     [@@deriving equal]
   end
 
+  (** One subscribed topic, with what every event of it needs, built once: the topic
+      string, its symbol and instrument, and its local book. *)
+  module Subscription = struct
+    type t =
+      { topic : Topic.t
+      ; symbol : Symbol.t
+      ; symbol_string : string
+      ; instrument : Md.Instrument.t
+      ; mutable book : Local_book.t option
+      }
+
+    let create (topic : Topic.t) =
+      match topic with
+      | Orderbook { symbol; _ } | Public_trade symbol | Tickers symbol ->
+        Some
+          { topic
+          ; symbol
+          ; symbol_string = Symbol.to_string symbol
+          ; instrument = instrument symbol
+          ; book = None
+          }
+      | Order _ | Execution _ | Position _ | Wallet | Other _ -> None
+    ;;
+
+    (* The topic's instrument when [symbol] is the topic's own symbol. *)
+    let instrument_for t symbol =
+      if Symbol.equal symbol t.symbol then t.instrument else instrument symbol
+    ;;
+  end
+
   type t =
-    { books : Local_book.t String.Table.t (** by topic *)
+    { mutable subscriptions : Subscription.t list (** one per topic *)
+    ; mutable aliases : (string * Subscription.t) list
+    (** topic strings as received, for lookups without allocating *)
     ; tickers : Ws_ticker.Data.t Symbol.Table.t
     ; funding : Funding_key.t Symbol.Table.t (** last emitted *)
+    ; scan : Frame_scan.t
     }
 
   let create () =
-    { books = String.Table.create ()
+    { subscriptions = []
+    ; aliases = []
     ; tickers = Symbol.Table.create ()
     ; funding = Symbol.Table.create ()
+    ; scan = Frame_scan.create ()
     }
   ;;
 
-  let trades ~recv_ts (push : Public_trade.t) =
+  let subscription t topic =
+    match
+      List.find t.subscriptions ~f:(fun (s : Subscription.t) -> Topic.equal s.topic topic)
+    with
+    | Some _ as found -> found
+    | None ->
+      let created = Subscription.create topic in
+      Option.iter created ~f:(fun s -> t.subscriptions <- s :: t.subscriptions);
+      created
+  ;;
+
+  (* The subscription of the topic string at [pos], [len] in [frame]; allocates only the
+     first time a topic string is seen. *)
+  let subscription_of_span t frame ~pos ~len =
+    let rec find = function
+      | [] -> None
+      | (alias, s) :: rest ->
+        if Frame_scan.equal_sub frame ~pos ~len alias then Some s else find rest
+    in
+    match find t.aliases with
+    | Some _ as found -> found
+    | None ->
+      let alias = String.sub frame ~pos ~len in
+      let found = subscription t (Topic.of_string alias) in
+      Option.iter found ~f:(fun s -> t.aliases <- (alias, s) :: t.aliases);
+      found
+  ;;
+
+  let book (subscription : Subscription.t) ~symbol =
+    match subscription.book with
+    | Some book -> book
+    | None ->
+      let book = Local_book.create symbol in
+      subscription.book <- Some book;
+      book
+  ;;
+
+  let trades t ~recv_ts (push : Public_trade.t) =
+    let subscription = subscription t push.topic in
     List.map push.data ~f:(fun (trade : Public_trade.Trade.t) ->
       Md.Event.Trade
-        { instrument = instrument trade.symbol
+        { instrument =
+            (match subscription with
+             | Some s -> Subscription.instrument_for s trade.symbol
+             | None -> instrument trade.symbol)
         ; exch_ts = time trade.time
         ; recv_ts
         ; price = trade.price
@@ -69,46 +145,55 @@ module Normalizer = struct
     List.map levels ~f:(fun { price; size } : Md.L2_update.Level.t -> { price; size })
   ;;
 
-  let bbo ~recv_ts book (push : Ws_orderbook.t) =
-    match Local_book.to_l2 ~depth:1 book with
-    | Some { bids = bid :: _; asks = ask :: _; _ } ->
+  let bbo ~recv_ts ~instrument ~ts book =
+    match Local_book.best_bid book, Local_book.best_ask book with
+    | Some (bid_price, bid_size), Some (ask_price, ask_size) ->
       [ Md.Event.Bbo
-          { instrument = instrument push.data.s
-          ; exch_ts = time push.ts
+          { instrument
+          ; exch_ts = time ts
           ; recv_ts
-          ; bid_price = bid.px
-          ; bid_size = bid.sz
-          ; ask_price = ask.px
-          ; ask_size = ask.sz
+          ; bid_price
+          ; bid_size
+          ; ask_price
+          ; ask_size
           }
       ]
-    | Some _ | None -> []
+    | _ -> []
   ;;
 
-  let l2 ~recv_ts (push : Ws_orderbook.t) =
-    let kind : Md.L2_update.Kind.t =
-      match push.type_ with
-      | Snapshot -> Snapshot
-      | Delta -> Delta
-    in
-    let bids = levels push.data.b
-    and asks = levels push.data.a in
+  let l2_event ~recv_ts ~instrument ~ts ~snapshot ~bids ~asks =
+    let kind : Md.L2_update.Kind.t = if snapshot then Snapshot else Delta in
     let bids, asks =
       match kind with
       | Delta -> bids, asks
       | Snapshot ->
-        ( List.sort bids ~compare:(fun a b -> Price.compare b.price a.price)
-        , List.sort asks ~compare:(fun a b -> Price.compare a.price b.price) )
+        ( List.sort bids ~compare:(fun (a : Md.L2_update.Level.t) b ->
+            Price.compare b.price a.price)
+        , List.sort asks ~compare:(fun (a : Md.L2_update.Level.t) b ->
+            Price.compare a.price b.price) )
     in
-    [ Md.Event.L2
-        { instrument = instrument push.data.s
-        ; exch_ts = time push.ts
-        ; recv_ts
-        ; kind
-        ; bids
-        ; asks
-        }
-    ]
+    [ Md.Event.L2 { instrument; exch_ts = time ts; recv_ts; kind; bids; asks } ]
+  ;;
+
+  let book_outcome
+    (subscription : Subscription.t)
+    ~(outcome : Local_book.Outcome.t)
+    ~depth
+    ~bbo
+    ~l2
+    : Output.t
+    =
+    match outcome with
+    | Applied -> Output.events (if depth = 1 then bbo () else l2 ())
+    | Stale | Waiting_for_snapshot -> Output.empty
+    | Gap { expected; received } ->
+      Log.Global.info_s
+        [%message
+          "bybit live feed: orderbook gap, resubscribing"
+            ~topic:(Topic.to_string subscription.topic)
+            (expected : int)
+            (received : int)];
+      { events = []; resubscribe = [ subscription.topic ] }
   ;;
 
   let orderbook t ~recv_ts (push : Ws_orderbook.t) : Output.t =
@@ -117,22 +202,27 @@ module Normalizer = struct
       | Orderbook { depth; _ } -> depth
       | _ -> 0
     in
-    let book =
-      Hashtbl.find_or_add t.books (Topic.to_string push.topic) ~default:(fun () ->
-        Local_book.create push.data.s)
-    in
-    match Local_book.apply book push with
-    | Applied ->
-      Output.events (if depth = 1 then bbo ~recv_ts book push else l2 ~recv_ts push)
-    | Stale | Waiting_for_snapshot -> Output.empty
-    | Gap { expected; received } ->
-      Log.Global.info_s
-        [%message
-          "bybit live feed: orderbook gap, resubscribing"
-            ~topic:(Topic.to_string push.topic)
-            (expected : int)
-            (received : int)];
-      { events = []; resubscribe = [ push.topic ] }
+    match subscription t push.topic with
+    | None -> Output.empty
+    | Some subscription ->
+      let book = book subscription ~symbol:push.data.s in
+      let instrument = Subscription.instrument_for subscription push.data.s in
+      book_outcome
+        subscription
+        ~outcome:(Local_book.apply book push)
+        ~depth
+        ~bbo:(fun () -> bbo ~recv_ts ~instrument ~ts:push.ts book)
+        ~l2:(fun () ->
+          l2_event
+            ~recv_ts
+            ~instrument
+            ~ts:push.ts
+            ~snapshot:
+              (match push.type_ with
+               | Snapshot -> true
+               | Delta -> false)
+            ~bids:(levels push.data.b)
+            ~asks:(levels push.data.a))
   ;;
 
   let ticker t ~recv_ts (push : Ws_ticker.t) =
@@ -156,7 +246,10 @@ module Normalizer = struct
        | Some _ | None ->
          Hashtbl.set t.funding ~key:symbol ~data:key;
          [ Md.Event.Funding
-             { instrument = instrument symbol
+             { instrument =
+                 (match subscription t push.topic with
+                  | Some s -> Subscription.instrument_for s symbol
+                  | None -> instrument symbol)
              ; exch_ts = time push.ts
              ; recv_ts
              ; rate = Decimal.to_float rate
@@ -170,7 +263,7 @@ module Normalizer = struct
 
   let message t ~recv_ts (message : Ws_message.t) : Output.t =
     match message with
-    | Public_trade push -> Output.events (trades ~recv_ts push)
+    | Public_trade push -> Output.events (trades t ~recv_ts push)
     | Orderbook push -> orderbook t ~recv_ts push
     | Ticker push -> Output.events (ticker t ~recv_ts push)
     | Subscribe_ack _
@@ -184,13 +277,116 @@ module Normalizer = struct
     | Unknown _ -> Output.empty
   ;;
 
-  let frame t ~recv_ts frame =
+  let scanned_trades t ~recv_ts ~frame (subscription : Subscription.t) =
+    let scan = t.scan in
+    let n = Frame_scan.trades scan in
+    let rec same_symbol i =
+      i >= n
+      || (Frame_scan.equal_sub
+            frame
+            ~pos:(Frame_scan.trade_symbol_pos scan i)
+            ~len:(Frame_scan.trade_symbol_len scan i)
+            subscription.symbol_string
+          && same_symbol (i + 1))
+    in
+    if not (same_symbol 0)
+    then None
+    else
+      Some
+        (Output.events
+           (List.init n ~f:(fun i ->
+              Md.Event.Trade
+                { instrument = subscription.instrument
+                ; exch_ts = time (Timestamp_ms.of_int_ms (Frame_scan.trade_time scan i))
+                ; recv_ts
+                ; price = Price.of_units (Frame_scan.trade_price scan i)
+                ; size = Size.of_units (Frame_scan.trade_size scan i)
+                ; side = (if Frame_scan.trade_buy scan i then Buy else Sell)
+                ; trade_id =
+                    String.sub
+                      frame
+                      ~pos:(Frame_scan.trade_id_pos scan i)
+                      ~len:(Frame_scan.trade_id_len scan i)
+                })))
+  ;;
+
+  let scanned_levels n ~price ~size =
+    List.init n ~f:(fun i : Md.L2_update.Level.t ->
+      { price = Price.of_units (price i); size = Size.of_units (size i) })
+  ;;
+
+  let scanned_book t ~recv_ts ~frame ~depth (subscription : Subscription.t) =
+    let scan = t.scan in
+    if not
+         (Frame_scan.equal_sub
+            frame
+            ~pos:(Frame_scan.symbol_pos scan)
+            ~len:(Frame_scan.symbol_len scan)
+            subscription.symbol_string)
+    then None
+    else (
+      let book = book subscription ~symbol:subscription.symbol in
+      let instrument = subscription.instrument in
+      let ts = Timestamp_ms.of_int_ms (Frame_scan.ts scan) in
+      Some
+        (book_outcome
+           subscription
+           ~outcome:(Local_book.apply_scan book ~frame scan)
+           ~depth
+           ~bbo:(fun () -> bbo ~recv_ts ~instrument ~ts book)
+           ~l2:(fun () ->
+             l2_event
+               ~recv_ts
+               ~instrument
+               ~ts
+               ~snapshot:(Frame_scan.snapshot scan)
+               ~bids:
+                 (scanned_levels
+                    (Frame_scan.bids scan)
+                    ~price:(Frame_scan.bid_price scan)
+                    ~size:(Frame_scan.bid_size scan))
+               ~asks:
+                 (scanned_levels
+                    (Frame_scan.asks scan)
+                    ~price:(Frame_scan.ask_price scan)
+                    ~size:(Frame_scan.ask_size scan)))))
+  ;;
+
+  let scan t ~recv_ts frame =
+    if not (Frame_scan.scan t.scan frame)
+    then None
+    else (
+      match
+        subscription_of_span
+          t
+          frame
+          ~pos:(Frame_scan.topic_pos t.scan)
+          ~len:(Frame_scan.topic_len t.scan)
+      with
+      | None -> None
+      | Some subscription ->
+        (match Frame_scan.kind t.scan, subscription.topic with
+         | Trades, Public_trade _ -> scanned_trades t ~recv_ts ~frame subscription
+         | Book, Orderbook { depth; _ } ->
+           scanned_book t ~recv_ts ~frame ~depth subscription
+         | (Trades | Book), _ -> None))
+  ;;
+
+  let decode_frame t ~recv_ts frame =
     let%bind.Or_error decoded = Ws_stream.decode frame in
     Or_error.try_with (fun () -> message t ~recv_ts decoded)
   ;;
 
+  let frame t ~recv_ts frame =
+    match scan t ~recv_ts frame with
+    | Some output -> Ok output
+    | None -> decode_frame t ~recv_ts frame
+    | exception exn -> Error (Error.of_exn exn)
+  ;;
+
   let reset t =
-    Hashtbl.clear t.books;
+    t.subscriptions <- [];
+    t.aliases <- [];
     Hashtbl.clear t.tickers;
     Hashtbl.clear t.funding
   ;;

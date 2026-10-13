@@ -101,8 +101,16 @@ module Normalizer : sig
 
   val message : t -> recv_ts:Time_ns.t -> Ws_message.t -> Output.t
 
-  (** Decodes then {!message}. [Error] for a frame that is not a known message. *)
+  (** {!scan}, else decodes the frame with Yojson and calls {!message}. [Error] for a
+      frame that is not a known message. *)
   val frame : t -> recv_ts:Time_ns.t -> string -> Output.t Or_error.t
+
+  (** The fast path of {!frame}: trade and orderbook frames read by {!Frame_scan}, with
+      the topic string, instrument and book cached per subscription. [None] for a frame
+      the scanner does not take (acks, tickers, unusual shapes), which then needs
+      {!message} on its Yojson decoding; the state is shared, so the two paths can be
+      mixed. *)
+  val scan : t -> recv_ts:Time_ns.t -> string -> Output.t option
 
   (** Forgets books and tickers, as after a dropped connection: books wait for the next
       snapshot, and the next ticker snapshot emits a funding record. *)

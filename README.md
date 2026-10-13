@@ -165,6 +165,9 @@ val Private_ws.connect : ... -> ?subscribe:Topic.t list -> Config.t -> ...
 - `messages` carries every decoded message (acks, both pong shapes, pushes, `Unknown`
   topics); undecodable frames are logged at debug level and dropped. Buffered without
   pushback.
+- Frames come from `Venue_net.Ws_client` through `on_message`, straight from the
+  connection, so `on_raw`, `intercept` and `on_frame` run in the reading job with no
+  pipe in between; `messages` is closed by `close`.
 
 ### `Local_book`
 
@@ -448,6 +451,8 @@ secrets should never be committed or passed on the command line. The clock must 
   before the backoff elapses, resubscription after it, `recv_ts` from the synthetic
   clock, `reconnects = 1`), `Resync` gaps on a reconnect and on a book sequence gap,
   and an allocation bound for the single-decode live path;
+- words per frame `Live_feed` and `Public_ws` add on top of the websocket, against a
+  local server that writes pre-encoded frames (`test/blast/`);
 - an integration test that starts `Bybit_sim.Server` on a free port and exercises every
   `Rest` endpoint, both websocket streams (subscribe, resubscribe snapshot, both pong
   shapes, auth, private pushes), and the `Venue` adapter end to end: books, a post-only
@@ -485,6 +490,34 @@ dune exec bench/main.exe -- -quota 1 -ascii
 dune exec --profile release bench/main.exe -- -quota 1 -ascii
 OCAMLPARAM='_,O3=1' dune exec --profile release bench/main.exe -- -quota 1 -ascii
 ```
+
+### Websocket delivery
+
+`Ws_stream` (under `Public_ws`, `Private_ws` and so `Live_feed`) takes frames from
+`Venue_net.Ws_client` through `on_message` instead of reading `Ws_client.messages` one
+frame at a time, which drops the extra pipe hop (about 13 words per frame).
+`on_connect` still runs before the first frame of each connection, so the `Resync` gap
+and resubscription come before the new connection's frames. `test_live_feed_words.ml`
+pins the words a frame costs on top of the websocket transport: `Live_feed` 63 before
+and 50 after, `Public_ws` (Yojson decode into `messages`) 483 and 470.
+
+`dune exec bench/feed/feed.exe` runs both against an in-process websocket server that
+writes one pre-encoded `publicTrade` frame (250 bytes) 1,000 per write (burst) or one per
+write, next to a bare `Ws_client` that only counts frames (the floor). Release profile,
+arm64 Mac (CI is amd64), best of five runs; the machine was shared with other builds, so
+times move by 10% or more between runs while words are exact:
+
+| | before (`messages`) | after (`on_message`) | words before | words after |
+| --- | ---: | ---: | ---: | ---: |
+| burst, ws floor | 154 to 162 ns | 181 to 283 ns | 41.7 | 41.7 |
+| burst, `Live_feed` | 897 to 902 ns (1.11 M frames/s) | 906 to 966 ns (1.04 to 1.10 M frames/s) | 104.9 | 91.9 |
+| burst, `Public_ws` | 3.42 to 3.45 us | 3.45 us | 520.9 | 507.8 |
+| one per write, ws floor | 2.48 to 2.63 us | 2.72 us | 195.2 | 195.2 |
+| one per write, `Live_feed` | 3.00 to 3.08 us | 3.10 us | 260.0 | 246.8 |
+
+The words drop by exactly the hop. Time per frame is decoding (burst) or socket reads
+(one per write); the after runs were on a busier machine (the floor itself got slower),
+and the change is inside the noise.
 
 ## UNVERIFIED
 

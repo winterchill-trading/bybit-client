@@ -1,0 +1,5 @@
+(executable
+ (name feed)
+ (libraries core core_unix.command_unix async bybit_client_blast)
+ (preprocess
+  (pps ppx_jane)))

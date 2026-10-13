@@ -40,6 +40,15 @@ let next r =
   else None
 ;;
 
+(* The first element of [r] satisfying [f], skipping the ones before it, waiting at most
+   5s for each. *)
+let rec next_where r ~f =
+  match%bind next r with
+  | Some x when f x -> return (Some x)
+  | Some _ -> next_where r ~f
+  | None -> return None
+;;
+
 (* Everything [r] delivers until it has been quiet for 300ms. *)
 let drain r =
   let rec loop acc =
@@ -290,7 +299,14 @@ let%expect_test "Venue against the simulator" =
       open 5 Buy 0.02@99400 -
       open 3 Buy 0.01@99500 mm-b-1
       |}];
-    let%bind book = next books in
+    (* The simulator pushes the book at most every 20ms, so under load the bid at 99500
+       can go out alone before the order at 99400 lands; wait for the book with the last
+       order in it. *)
+    let%bind book =
+      next_where books ~f:(fun (l2 : Neutral.L2.t) ->
+        List.exists l2.bids ~f:(fun level ->
+          Price.equal level.px (Price.of_string "99400")))
+    in
     Option.iter book ~f:print_book;
     [%expect
       {| book BTCUSDT: bids [0.01@99500 0.02@99400 0.01@99000] asks [0.01@100000] |}];

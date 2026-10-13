@@ -30,11 +30,20 @@ val symbol : t -> Symbol.t
 (** [Applied] snapshot or delta. Pushes for another symbol raise. *)
 val apply : t -> Ws_orderbook.t -> Outcome.t
 
+(** {!apply} for an orderbook frame read by {!Frame_scan.scan} (same rules, same outcome). *)
+val apply_scan : t -> frame:string -> Frame_scan.t -> Outcome.t
+
 (** [true] once a snapshot has been applied and no gap has been seen since. *)
 val is_synced : t -> bool
 
 (** Last applied update id. *)
 val update_id : t -> int option
+
+(** Best bid and ask price with their sizes; [None] while not synced or when the side is
+    empty. *)
+val best_bid : t -> (Price.t * Size.t) option
+
+val best_ask : t -> (Price.t * Size.t) option
 
 (** The book, best price first, at most [depth] levels per side (default all), [time] the
     push timestamp in nanoseconds. Order counts are not sent by Bybit; [n] is 0. [None]

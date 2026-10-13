@@ -86,11 +86,13 @@ let[@zero_alloc] equal_sub s ~pos ~len lit =
     i = len)
 ;;
 
-let[@zero_alloc] is_space c =
+let[@zero_alloc] [@inline] is_digit c = Char.( >= ) c '0' && Char.( <= ) c '9'
+
+let[@zero_alloc] [@inline] is_space c =
   Char.equal c ' ' || Char.equal c '\n' || Char.equal c '\r' || Char.equal c '\t'
 ;;
 
-let[@zero_alloc] ws t s =
+let[@zero_alloc] [@inline] ws t s =
   let n = String.length s in
   let mutable i = t.pos in
   while i < n && is_space (String.unsafe_get s i) do
@@ -100,13 +102,13 @@ let[@zero_alloc] ws t s =
 ;;
 
 (* The next character after whitespace, not consumed. *)
-let[@zero_alloc] peek t s =
+let[@zero_alloc] [@inline] peek t s =
   ws t s;
   if t.pos >= String.length s then fail ();
   String.unsafe_get s t.pos
 ;;
 
-let[@zero_alloc] expect t s c =
+let[@zero_alloc] [@inline] expect t s c =
   if not (Char.equal (peek t s) c) then fail ();
   t.pos <- t.pos + 1
 ;;
@@ -134,7 +136,7 @@ let[@zero_alloc] int t s =
   let start = t.pos in
   let mutable i = start in
   let mutable v = 0 in
-  while i < n && Char.is_digit (String.unsafe_get s i) do
+  while i < n && is_digit (String.unsafe_get s i) do
     v <- (v * 10) + (Char.to_int (String.unsafe_get s i) - 48);
     i <- i + 1
   done;
@@ -154,7 +156,7 @@ let[@zero_alloc] decimal t s =
   let start = t.pos in
   let mutable i = start in
   let mutable v = 0 in
-  while i < n && Char.is_digit (String.unsafe_get s i) do
+  while i < n && is_digit (String.unsafe_get s i) do
     v <- (v * 10) + (Char.to_int (String.unsafe_get s i) - 48);
     i <- i + 1
   done;
@@ -164,7 +166,7 @@ let[@zero_alloc] decimal t s =
   then (
     i <- i + 1;
     let frac_start = i in
-    while i < n && Char.is_digit (String.unsafe_get s i) do
+    while i < n && is_digit (String.unsafe_get s i) do
       if frac < decimals
       then (
         v <- (v * 10) + (Char.to_int (String.unsafe_get s i) - 48);
@@ -230,19 +232,19 @@ let[@zero_alloc] skip_value t s =
 ;;
 
 (* After a member: [true] if another one follows, [false] at the closing [close]. *)
-let[@zero_alloc] more t s close =
+let[@zero_alloc] [@inline] more t s close =
   let c = peek t s in
   t.pos <- t.pos + 1;
   if Char.equal c ',' then true else if Char.equal c close then false else fail ()
 ;;
 
 (* An object key and its colon; the key is in [str_pos], [str_len]. *)
-let[@zero_alloc] key t s =
+let[@zero_alloc] [@inline] key t s =
   string t s;
   expect t s ':'
 ;;
 
-let[@zero_alloc] is_key t s lit = equal_sub s ~pos:t.str_pos ~len:t.str_len lit
+let[@zero_alloc] [@inline] is_key t s lit = equal_sub s ~pos:t.str_pos ~len:t.str_len lit
 
 let[@zero_alloc] levels t s ~(price : int array) ~(size : int array) =
   expect t s '[';

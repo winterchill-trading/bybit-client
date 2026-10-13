@@ -8,6 +8,7 @@ let connect
   ?max_backoff
   ?on_reconnect
   ?on_raw
+  ?intercept
   ?on_frame
   ?time_source
   (config : Config.Read_only.t)
@@ -18,6 +19,7 @@ let connect
     ?max_backoff
     ?on_reconnect
     ?on_raw
+    ?intercept
     ?on_frame
     ?time_source
     ~log_name:"bybit-client public ws"

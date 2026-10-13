@@ -58,6 +58,7 @@ let connect
   ?(max_backoff = Time_ns.Span.of_int_sec 30)
   ?(on_reconnect = fun () -> ())
   ?(on_raw = fun (_ : string) -> ())
+  ?(intercept = fun (_ : string) -> false)
   ?(on_frame = fun (_ : string) (_ : Ws_message.t Or_error.t) -> ())
   ?authenticate
   ?(auth_timeout = Time_ns.Span.of_int_sec 10)
@@ -69,8 +70,7 @@ let connect
   let ready = ref false in
   let auth_ack : Op_response.t Ivar.t option ref = ref None in
   let out_r, out_w = Pipe.create () in
-  let on_frame frame =
-    on_raw frame;
+  let on_decoded frame =
     let decoded = decode frame in
     on_frame frame decoded;
     match decoded with
@@ -88,6 +88,10 @@ let connect
          Log.Global.debug_s [%message (log_name ^ ": unknown message") (json : Json.t)]
        | _ -> ());
       Pipe.write_without_pushback_if_open out_w message
+  in
+  let on_text frame =
+    on_raw frame;
+    if not (intercept frame) then on_decoded frame
   in
   let authenticated client =
     match authenticate with
@@ -130,7 +134,7 @@ let connect
       ()
   in
   don't_wait_for
-    (let%map () = Pipe.iter_without_pushback (Ws_client.messages client) ~f:on_frame in
+    (let%map () = Pipe.iter_without_pushback (Ws_client.messages client) ~f:on_text in
      Pipe.close out_w);
   { client; subscriptions; messages = out_r; ready }
 ;;

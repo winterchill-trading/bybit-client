@@ -469,15 +469,11 @@ let connect
           reported := reconnects;
           gap ~recv_ts ~stream ()))
     in
-    let on_frame frame decoded =
-      let recv_ts = Time_source.now time_source in
-      counters.frames <- counters.frames + 1;
-      report_reconnect ~recv_ts;
-      Option.iter on_raw ~f:(fun on_raw -> on_raw ~stream ~recv_ts frame);
-      match
-        Or_error.bind decoded ~f:(fun message ->
-          Or_error.try_with (fun () -> Normalizer.message normalizer ~recv_ts message))
-      with
+    (* [intercept] runs first for every frame; [on_frame] only for frames the scanner left
+       to the Yojson decoder, right after [intercept], so it reuses its [recv_ts]. *)
+    let last_recv_ts = ref Time_ns.epoch in
+    let handle frame ~recv_ts (output : Normalizer.Output.t Or_error.t) =
+      match output with
       | Error error ->
         counters.parse_errors <- counters.parse_errors + 1;
         Log.Global.error_s
@@ -496,12 +492,36 @@ let connect
              | _ -> gap ~recv_ts ~stream ());
             don't_wait_for (Public_ws.resubscribe ws topic)))
     in
+    let intercept frame =
+      let recv_ts = Time_source.now time_source in
+      last_recv_ts := recv_ts;
+      counters.frames <- counters.frames + 1;
+      report_reconnect ~recv_ts;
+      Option.iter on_raw ~f:(fun on_raw -> on_raw ~stream ~recv_ts frame);
+      match Normalizer.scan normalizer ~recv_ts frame with
+      | None -> false
+      | Some output ->
+        handle frame ~recv_ts (Ok output);
+        true
+      | exception exn ->
+        handle frame ~recv_ts (Error (Error.of_exn exn));
+        true
+    in
+    let on_frame frame decoded =
+      let recv_ts = !last_recv_ts in
+      handle
+        frame
+        ~recv_ts
+        (Or_error.bind decoded ~f:(fun message ->
+           Or_error.try_with (fun () -> Normalizer.message normalizer ~recv_ts message)))
+    in
     let on_reconnect () =
       report_reconnect ~recv_ts:(Time_source.now time_source);
       Log.Global.info "bybit live feed: %s reconnected" (Md.Stream.to_string stream)
     in
     let%bind connection =
-      Public_ws.connect ~on_reconnect ~on_frame ~time_source config >>| Or_error.ok_exn
+      Public_ws.connect ~on_reconnect ~intercept ~on_frame ~time_source config
+      >>| Or_error.ok_exn
     in
     Set_once.set_exn ws connection;
     (* Frames are handled in [on_frame]; nobody reads the pipe. *)

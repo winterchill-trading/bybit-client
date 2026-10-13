@@ -23,11 +23,15 @@ let benches stream =
       Public_ws.For_testing.decode frame |> Result.ok)
   in
   let frame_normalizer = Live_feed.Normalizer.create () in
+  let scan = Frame_scan.create () in
   let message_normalizer = Live_feed.Normalizer.create () in
   [ Bench.Test.create
       ~name:(stream ^ " decode")
       (cycle frames ~f:(fun frame ->
          ignore (Public_ws.For_testing.decode frame : _ Or_error.t)))
+  ; Bench.Test.create
+      ~name:(stream ^ " scan")
+      (cycle frames ~f:(fun frame -> ignore (Frame_scan.scan scan frame : bool)))
   ; Bench.Test.create
       ~name:(stream ^ " normalize")
       (cycle messages ~f:(fun message ->

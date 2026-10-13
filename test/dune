@@ -10,6 +10,7 @@
   async
   async_websocket
   bybit-client
+  bybit_client_blast
   bybit-protocol
   bybit-sim
   exchange-core
